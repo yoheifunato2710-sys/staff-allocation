@@ -19,7 +19,7 @@ function getSimplifiedInfo(mod) {
 }
 
 export default function ModalityDB({ onBack }) {
-  const { modalityData, setModalityData, saveModalityData } = useData();
+  const { modalityData, setModalityData } = useData();
   const [expandedId, setExpandedId] = useState(null);
 
   const addModality = () => {
@@ -77,174 +77,195 @@ export default function ModalityDB({ onBack }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
-      <div className="absolute top-20 right-20 w-96 h-96 bg-violet-500/10 rounded-full blur-3xl" />
+    <div className="min-h-screen w-full min-w-0 bg-violet-400 p-5 relative overflow-hidden box-border">
+      <div className="absolute top-20 right-20 w-96 h-96 bg-violet-400/30 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="max-w-2xl mx-auto relative">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold text-white">モダリティ情報入力</h2>
+      <div className="relative flex flex-col h-full w-full min-w-0 max-w-full">
+        <div className="flex justify-between items-center mb-4 shrink-0">
+          <h2 className="text-3xl font-bold text-stone-800">モダリティ情報入力</h2>
           <div className="flex items-center gap-2">
-            <button onClick={addModality} className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-sm font-medium transition-all">
+            <button onClick={addModality} className="px-5 py-2.5 bg-violet-500 hover:bg-violet-400 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
               ➕ 追加
             </button>
-            <button onClick={onBack} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-300 text-sm font-medium transition-all">
+            <button onClick={onBack} className="px-5 py-2.5 bg-stone-50 hover:bg-slate-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
               ← メインメニュー
             </button>
           </div>
         </div>
 
-        {modalityData.length === 0 ? (
-          <div className="bg-slate-900/40 rounded-xl border border-slate-800 p-8 text-center">
-            <p className="text-slate-500 text-sm mb-3">モダリティがありません</p>
-            <button onClick={addModality} className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-sm font-medium transition-all">
-              ➕ モダリティを追加
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {modalityData.map((mod) => (
-              <div key={mod.id} className="bg-slate-900/40 rounded-xl border border-slate-800 overflow-hidden">
-                <div
-                  className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
-                  onClick={() => setExpandedId(expandedId === mod.id ? null : mod.id)}
-                >
-                  <span className="text-slate-400 text-xs w-5">{mod.id}</span>
-                  <span className="flex-1 min-w-0 font-medium text-white truncate">{mod.name || '（未入力）'}</span>
-                  <span className="text-slate-500 text-xs shrink-0">{getSimplifiedInfo(mod)}</span>
-                  {mod.note ? <span className="text-slate-600 text-xs shrink-0" title={mod.note}>📝</span> : null}
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); deleteModality(mod.id); }}
-                    className="shrink-0 text-slate-500 hover:text-red-400 text-xs px-2 py-1 rounded transition-colors"
+        <div className="flex gap-6 flex-1 min-h-0 min-w-0 w-full">
+          {/* 左: モダリティ一覧 */}
+          <div className="w-[520px] min-w-[520px] shrink-0 flex flex-col">
+            {modalityData.length === 0 ? (
+              <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-8 text-center shadow-md">
+                <p className="text-stone-700 text-xl mb-5">モダリティがありません</p>
+                <button onClick={addModality} className="px-5 py-2.5 bg-violet-500 hover:bg-violet-400 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
+                  ➕ モダリティを追加
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2 overflow-y-auto pr-1">
+                {modalityData.map((mod) => (
+                  <div
+                    key={mod.id}
+                    className={`rounded-xl border-2 overflow-hidden shadow-md cursor-pointer transition-all ${
+                      expandedId === mod.id
+                        ? 'border-violet-500 bg-violet-50/80 ring-2 ring-violet-200'
+                        : 'border-slate-400 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-500'
+                    }`}
+                    onClick={() => setExpandedId(mod.id)}
                   >
-                    削除
-                  </button>
-                  <span className="text-slate-500 text-sm shrink-0">{expandedId === mod.id ? '▲' : '▼'}</span>
-                </div>
-
-                {expandedId === mod.id && (
-                  <div className="border-t border-slate-800 px-4 py-4 bg-slate-900/30 space-y-4">
-                    <div>
-                      <input
-                        type="text"
-                        value={mod.name}
-                        onChange={(e) => updateModalityName(mod.id, e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white text-sm placeholder-slate-500 focus:border-violet-500 outline-none"
-                        placeholder="モダリティ名"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex gap-2 mb-2">
-                        <button
-                          type="button"
-                          onClick={() => changeStaffMode(mod.id, 'uniform')}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${mod.staffMode === 'uniform' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
-                        >
-                          一律
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => changeStaffMode(mod.id, 'individual')}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${mod.staffMode === 'individual' ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
-                        >
-                          曜日別
-                        </button>
-                      </div>
-                      {mod.staffMode === 'uniform' ? (
-                        <div className="flex items-center gap-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-500 text-xs w-6">AM</span>
-                            <input
-                              type="number"
-                              min="0"
-                              max="10"
-                              value={mod.uniformStaffAm ?? mod.uniformStaff ?? 0}
-                              onChange={(e) => updateUniformStaffSlot(mod.id, 'am', e.target.value)}
-                              className="w-14 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm text-center focus:border-violet-500 outline-none"
-                            />
-                            <span className="text-slate-500 text-xs">名</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-slate-500 text-xs w-6">PM</span>
-                            <input
-                              type="number"
-                              min="0"
-                              max="10"
-                              value={mod.uniformStaffPm ?? mod.uniformStaff ?? 0}
-                              onChange={(e) => updateUniformStaffSlot(mod.id, 'pm', e.target.value)}
-                              className="w-14 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm text-center focus:border-violet-500 outline-none"
-                            />
-                            <span className="text-slate-500 text-xs">名</span>
-                          </div>
-                          <span className="text-slate-500 text-xs">（月～金）</span>
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {['mon', 'tue', 'wed', 'thu', 'fri'].map((day, idx) => {
-                            const v = mod.weekdayStaff?.[day];
-                            const amVal = typeof v === 'object' ? (v?.am ?? 0) : (v ?? 0);
-                            const pmVal = typeof v === 'object' ? (v?.pm ?? 0) : (v ?? 0);
-                            return (
-                              <div key={day} className="flex items-center gap-2 flex-wrap">
-                                <span className="text-slate-500 text-xs w-5">{['月', '火', '水', '木', '金'][idx]}</span>
-                                <span className="text-slate-600 text-xs w-5">AM</span>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="10"
-                                  value={amVal}
-                                  onChange={(e) => updateWeekdayStaffSlot(mod.id, day, 'am', e.target.value)}
-                                  className="w-12 px-1 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm text-center focus:border-violet-500 outline-none"
-                                />
-                                <span className="text-slate-600 text-xs w-5">PM</span>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="10"
-                                  value={pmVal}
-                                  onChange={(e) => updateWeekdayStaffSlot(mod.id, day, 'pm', e.target.value)}
-                                  className="w-12 px-1 py-1.5 bg-slate-800 border border-slate-600 rounded text-white text-sm text-center focus:border-violet-500 outline-none"
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <textarea
-                        value={mod.note}
-                        onChange={(e) => updateNote(mod.id, e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded-lg text-white text-sm placeholder-slate-500 focus:border-violet-500 outline-none resize-y min-h-[60px]"
-                        placeholder="備考（任意）"
-                        rows={2}
-                      />
-                    </div>
-
-                    <div className="flex gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => { saveModalityData(); setExpandedId(null); }}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-all"
-                      >
-                        保存
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setExpandedId(null)}
-                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl text-sm font-medium transition-all"
-                      >
-                        取り消し
-                      </button>
+                    <div className="flex items-center gap-2 px-3 py-3">
+                      <span className="text-stone-700 text-lg font-semibold w-7 shrink-0">{mod.id}</span>
+                      <span className="flex-1 min-w-0 font-semibold text-stone-900 text-lg truncate">{mod.name || '（未入力）'}</span>
+                      <span className="text-stone-600 text-base shrink-0">{getSimplifiedInfo(mod)}</span>
+                      {mod.note ? <span className="text-stone-500 text-base shrink-0" title={mod.note}>📝</span> : null}
                     </div>
                   </div>
-                )}
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
+
+          {/* 右: 編集パネル */}
+          <div className="flex-1 min-w-0 overflow-auto flex flex-col">
+            {expandedId !== null && modalityData.find(m => m.id === expandedId) ? (
+              (() => {
+                const mod = modalityData.find(m => m.id === expandedId);
+                if (!mod) return null;
+                return (
+                  <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-6 shadow-md flex-1 overflow-y-auto">
+                    <h3 className="text-2xl font-bold text-stone-800 mb-6">編集: {mod.name || '（未入力）'}</h3>
+                    <div className="space-y-5 w-full min-w-0">
+                      <div>
+                        <label className="block text-stone-700 text-lg font-medium mb-2">モダリティ名</label>
+                        <input
+                          type="text"
+                          value={mod.name}
+                          onChange={(e) => updateModalityName(mod.id, e.target.value)}
+                          className="w-full px-4 py-3 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg placeholder-stone-500 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none"
+                          placeholder="モダリティ名"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-stone-700 text-lg font-medium mb-2">必要人数</label>
+                        <div className="flex gap-3 mb-3">
+                          <button
+                            type="button"
+                            onClick={() => changeStaffMode(mod.id, 'uniform')}
+                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'uniform' ? 'bg-violet-500 text-white shadow-sm' : 'bg-slate-100 text-stone-700 hover:bg-stone-200'}`}
+                          >
+                            一律
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => changeStaffMode(mod.id, 'individual')}
+                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'individual' ? 'bg-violet-500 text-white shadow-sm' : 'bg-slate-100 text-stone-700 hover:bg-stone-200'}`}
+                          >
+                            曜日別
+                          </button>
+                        </div>
+                        {mod.staffMode === 'uniform' ? (
+                          <div className="flex items-center gap-6">
+                            <div className="flex items-center gap-2">
+                              <span className="text-stone-700 text-lg font-medium w-9">AM</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="10"
+                                value={mod.uniformStaffAm ?? mod.uniformStaff ?? 0}
+                                onChange={(e) => updateUniformStaffSlot(mod.id, 'am', e.target.value)}
+                                className="w-20 px-3 py-2.5 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg text-center focus:border-violet-400 outline-none"
+                              />
+                              <span className="text-stone-700 text-lg">名</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-stone-700 text-lg font-medium w-9">PM</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="10"
+                                value={mod.uniformStaffPm ?? mod.uniformStaff ?? 0}
+                                onChange={(e) => updateUniformStaffSlot(mod.id, 'pm', e.target.value)}
+                                className="w-20 px-3 py-2.5 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg text-center focus:border-violet-400 outline-none"
+                              />
+                              <span className="text-stone-700 text-lg">名</span>
+                            </div>
+                            <span className="text-stone-600 text-lg">（月～金）</span>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {['mon', 'tue', 'wed', 'thu', 'fri'].map((day, idx) => {
+                              const v = mod.weekdayStaff?.[day];
+                              const amVal = typeof v === 'object' ? (v?.am ?? 0) : (v ?? 0);
+                              const pmVal = typeof v === 'object' ? (v?.pm ?? 0) : (v ?? 0);
+                              return (
+                                <div key={day} className="flex items-center gap-3 flex-wrap">
+                                  <span className="text-stone-700 text-lg font-medium w-8">{['月', '火', '水', '木', '金'][idx]}</span>
+                                  <span className="text-stone-700 text-lg w-9">AM</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="10"
+                                    value={amVal}
+                                    onChange={(e) => updateWeekdayStaffSlot(mod.id, day, 'am', e.target.value)}
+                                    className="w-16 px-2 py-2.5 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-lg text-center focus:border-violet-400 outline-none"
+                                  />
+                                  <span className="text-stone-700 text-lg w-9">PM</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="10"
+                                    value={pmVal}
+                                    onChange={(e) => updateWeekdayStaffSlot(mod.id, day, 'pm', e.target.value)}
+                                    className="w-16 px-2 py-2.5 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-lg text-center focus:border-violet-400 outline-none"
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="block text-stone-700 text-lg font-medium mb-2">備考（任意）</label>
+                        <textarea
+                          value={mod.note}
+                          onChange={(e) => updateNote(mod.id, e.target.value)}
+                          className="w-full px-4 py-3 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg placeholder-stone-500 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-y min-h-[90px]"
+                          placeholder="備考（任意）"
+                          rows={2}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-3 pt-3 items-center">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedId(null)}
+                          className="px-5 py-2.5 bg-slate-100 hover:bg-stone-200 text-stone-800 rounded-xl text-lg font-semibold transition-all"
+                        >
+                          閉じる
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteModality(mod.id)}
+                          className="ml-auto px-5 py-2.5 bg-red-500 hover:bg-red-400 text-white rounded-xl text-lg font-semibold transition-all shadow-sm"
+                        >
+                          削除
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="bg-slate-50/80 rounded-xl border-2 border-dashed border-slate-300 p-8 flex items-center justify-center min-h-[280px]">
+                <p className="text-stone-600 text-xl">左の一覧からモダリティをクリックして編集してください</p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

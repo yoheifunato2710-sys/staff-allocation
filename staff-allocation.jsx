@@ -82,7 +82,7 @@ export default function StaffAllocationSystem() {
 
   // メインメニュー
   const MainMenu = () => (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-5 relative overflow-hidden">
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-5 relative overflow-hidden">
       {/* 背景エフェクト */}
       <div className="absolute inset-0">
         <div className="absolute top-20 left-20 w-96 h-96 bg-violet-500/10 rounded-full blur-3xl"></div>
@@ -219,7 +219,7 @@ export default function StaffAllocationSystem() {
     };
 
     return (
-      <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
+      <div className="min-h-screen bg-slate-900 p-5 relative overflow-hidden">
         {/* 背景エフェクト */}
         <div className="absolute top-20 right-20 w-96 h-96 bg-violet-500/10 rounded-full blur-3xl"></div>
         
@@ -400,7 +400,7 @@ export default function StaffAllocationSystem() {
     };
 
     return (
-      <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
+      <div className="min-h-screen bg-slate-900 p-5 relative overflow-hidden">
         {/* 背景エフェクト */}
         <div className="absolute top-20 left-20 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
         
@@ -540,7 +540,7 @@ export default function StaffAllocationSystem() {
 
   // ルール管理画面
   const RulesScreen = () => (
-    <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
+    <div className="min-h-screen bg-slate-900 p-5 relative overflow-hidden">
       {/* 背景エフェクト */}
       <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl"></div>
       
@@ -781,7 +781,7 @@ export default function StaffAllocationSystem() {
     };
 
     return (
-      <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
+      <div className="min-h-screen bg-slate-900 p-5 relative overflow-hidden">
         {/* 背景エフェクト */}
         <div className="absolute bottom-20 left-20 w-96 h-96 bg-rose-500/10 rounded-full blur-3xl"></div>
         
@@ -1143,7 +1143,7 @@ export default function StaffAllocationSystem() {
     };
 
     return (
-      <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
+      <div className="min-h-screen bg-slate-900 p-5 relative overflow-hidden">
         {/* 背景エフェクト */}
         <div className="absolute top-20 right-20 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl"></div>
         
@@ -1177,11 +1177,6 @@ export default function StaffAllocationSystem() {
                 </button>
               </div>
             </div>
-          </div>
-
-          {/* 注意事項 */}
-          <div className="bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl mb-6 text-sm text-indigo-200 backdrop-blur-sm">
-            <strong>📌 注意：</strong> まず「夜勤・日勤当番表」で期間を設定してください。その後、自動配置を実行すると、スコアに基づいて職員を各モダリティに配置します。
           </div>
 
           {/* マトリックス表示 */}
@@ -1270,8 +1265,7 @@ export default function StaffAllocationSystem() {
           ) : (
             <div className="bg-slate-900/30 backdrop-blur-sm rounded-2xl p-20 text-center border border-slate-800">
               <div className="text-6xl mb-4">📅</div>
-              <div className="text-slate-400 text-xl mb-2">カレンダーがありません</div>
-              <div className="text-slate-500 text-sm">「夜勤・日勤当番表」で期間を設定してください</div>
+              <div className="text-slate-400 text-xl">表示する期間がありません</div>
             </div>
           )}
         </div>
@@ -1281,7 +1275,7 @@ export default function StaffAllocationSystem() {
 
   // プレースホルダー画面
   const PlaceholderScreen = ({ title }) => (
-    <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
+    <div className="min-h-screen bg-slate-900 p-5 relative overflow-hidden">
       {/* 背景エフェクト */}
       <div className="absolute top-20 right-20 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl"></div>
       

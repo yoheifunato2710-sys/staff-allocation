@@ -1,61 +1,202 @@
-import React from 'react';
+import React, { useState } from 'react';
+
+const MENU_ITEMS = [
+  { id: 'staff', label: '職員情報入力', icon: '📝' },
+  { id: 'modality', label: 'モダリティ情報入力', icon: '⚙️' },
+  { id: 'leave', label: '休暇・出張入力', icon: '🏖️' },
+  { id: 'shift', label: '当番表作成', icon: '🗓️' },
+  { id: 'allocation', label: '配置表作成', icon: '📊' },
+  { id: 'backup', label: 'バックアップ・復元', icon: '📦' },
+  { id: 'score', label: '配置スコア', icon: '⚙️' },
+  { id: 'exclude', label: '配置対象外', icon: '📅' },
+  { id: 'auto', label: '自動配置のルール', icon: '✓' }
+];
+
+const EXPLANATIONS = {
+  staff: {
+    title: '職員情報入力',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">職員を登録し、各モダリティの配置スコア（0〜4）を設定する画面です。</p>
+        <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
+          <li>左の一覧から職員をクリックして編集、または「新規登録」で追加</li>
+          <li>職員ID・氏名・入職年数・役職を入力</li>
+          <li>各モダリティごとに配置スコア（0〜4）を設定。スコアの意味は「配置スコア」ボタンで確認</li>
+          <li>入力内容は自動で保存されます</li>
+        </ul>
+      </>
+    )
+  },
+  modality: {
+    title: 'モダリティ情報入力',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">配置先となるモダリティ（診療科・部門など）を追加し、必要人数を設定する画面です。</p>
+        <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
+          <li>左の一覧からモダリティをクリックして編集、または「追加」で新規作成</li>
+          <li>必要人数は「一律」（月〜金同じ）か「曜日別」（曜日ごとにAM/PMの人数）を選択</li>
+          <li>一律の場合はAM○名・PM○名、曜日別の場合は月〜金それぞれにAM・PMの人数を入力</li>
+          <li>入力内容は自動で保存されます</li>
+        </ul>
+      </>
+    )
+  },
+  leave: {
+    title: '休暇・出張入力',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">休暇・出張の日付と職員を登録し、カレンダーに反映する画面です。</p>
+        <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
+          <li>左に週休・リフ休を登録した職員の日数が自動表示されます</li>
+          <li>カレンダー上で日付をドラッグして範囲選択 → 職員と種類（週休・年休・リフ休・特別休・出張）を選んで登録</li>
+          <li>登録済みの休暇はセルをクリックで削除可能</li>
+          <li>登録内容は自動で保存され、当番表・配置表で「配置対象外」として扱われます</li>
+        </ul>
+      </>
+    )
+  },
+  shift: {
+    title: '当番表作成',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">期間を決めてカレンダーを生成し、夜勤・日勤・週休の順番・ペアを設定する画面です。</p>
+        <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
+          <li>「期間設定」で開始日・終了日を入力し「カレンダー生成」を実行</li>
+          <li>「順番設定」で夜勤順番リスト・日勤順番リスト・ペアを設定</li>
+          <li>「当番自動配置」「週休自動割り当て」で自動割り当て可能</li>
+          <li>週休のセルはクリックで手動追加・削除できます</li>
+          <li>設定内容は自動で保存され、配置表作成で参照されます</li>
+        </ul>
+      </>
+    )
+  },
+  allocation: {
+    title: '配置表作成',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">当番表の期間を読み込み、スコアに基づいて各モダリティへ職員を自動配置する画面です。</p>
+        <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
+          <li>当番表作成でカレンダー・当番を保存した状態で利用します</li>
+          <li>「自動配置」で職員の配置スコアと当番表・休暇を考慮してモダリティ別に割り当て</li>
+          <li>「CSV」で配置表をCSV出力可能</li>
+          <li>配置結果は自動で保存されます。詳細なルールは「自動配置のルール」ボタンで確認</li>
+        </ul>
+      </>
+    )
+  },
+  backup: {
+    title: 'バックアップ・復元',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">メインメニュー左側の「データのバックアップ」で、全データをファイルに保存・復元できます。</p>
+        <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
+          <li><strong>今のデータをファイルに保存</strong> … 職員・モダリティ・当番表・休暇・配置表・カレンダーメモなどを1つのJSONファイルでダウンロード</li>
+          <li><strong>ファイルからデータを復元</strong> … 保存したJSONファイルを選ぶと、その内容でデータを上書き復元します（画面が再読み込みされます）</li>
+          <li>アプリを閉じる前にバックアップを取るよう、終了時に確認メッセージが表示されます</li>
+        </ul>
+      </>
+    )
+  },
+  score: {
+    title: '配置スコア（職員情報入力で設定）',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">各職員について、モダリティごとに 0〜4 またはトレーニングのスコアを付けます。</p>
+        <div className="bg-violet-50 border border-violet-200 p-4 rounded-xl text-base space-y-2 text-stone-700">
+          <div><strong className="text-violet-600">0</strong> … 適正なし（このモダリティには配置しない）</div>
+          <div><strong className="text-violet-600">1</strong> … 優先度低</div>
+          <div><strong className="text-violet-600">2</strong> … 優先度中</div>
+          <div><strong className="text-violet-600">3</strong> … 優先度高</div>
+          <div><strong className="text-violet-600">4</strong> … 絶対固定（必ずこのモダリティに配置する）</div>
+          <div><strong className="text-violet-600">トレーニング</strong> … 可能な限り配置するが、必要人数にはカウントされない（必要人数は他の職員で満たす）</div>
+        </div>
+      </>
+    )
+  },
+  exclude: {
+    title: '当番表で決まる「配置対象外」',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-3">当番表で次のいずれかに割り当てられた職員は、その日は配置表のモダリティに配置されません。</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside">
+          <li>夜勤（16）・日勤・サポート・B・非番</li>
+          <li>週休（当番表の「週休」に登録された職員）</li>
+          <li>休暇・出張管理で登録した日の職員</li>
+        </ul>
+      </>
+    )
+  },
+  auto: {
+    title: '自動配置のルール',
+    body: (
+      <>
+        <ul className="text-stone-700 text-base space-y-2">
+          <li>平日（土日・祝日を除く）の各日について、各モダリティの必要人数をスコア1〜4の職員で満たし、その後トレーニング（5）の職員を可能な限り追加します。</li>
+          <li>必要人数はモダリティ情報入力で設定します。一律の場合は「AM○名・PM○名」、曜日別の場合は「月〜金」ごとに「AM○・PM○」を設定できます。</li>
+          <li>スコア 0 の職員はそのモダリティには配置されません。</li>
+          <li>まずスコア 4（絶対固定）を優先し、必要人数までスコア 3→2→1 の順で埋めます。トレーニング（5）は必要人数にカウントせず、余裕があれば追加で配置します。</li>
+          <li>1人の職員は1日1つのモダリティのみ配置されます。</li>
+        </ul>
+      </>
+    )
+  }
+};
 
 export default function RulesScreen({ onBack }) {
-  return (
-    <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
-      <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
+  const [selectedId, setSelectedId] = useState(null);
 
-      <div className="max-w-3xl mx-auto relative">
-        <div className="flex justify-between items-center gap-4 mb-6">
-          <h2 className="text-2xl font-bold text-white">ルール確認</h2>
-          <button onClick={onBack} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-300 text-sm font-medium transition-all">
+  return (
+    <div className="min-h-screen bg-violet-400 p-5 relative overflow-hidden">
+      <div className="absolute top-20 right-20 w-96 h-96 bg-emerald-200/30 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="relative w-full max-w-6xl mx-auto">
+        <div className="flex justify-between items-center gap-4 mb-4">
+          <h2 className="text-3xl font-bold text-stone-800">ルール確認</h2>
+          <button onClick={onBack} className="px-5 py-2.5 bg-stone-50 hover:bg-slate-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
             ← メインメニュー
           </button>
         </div>
 
-        <div className="space-y-6">
-          <div className="bg-slate-900/30 backdrop-blur-sm rounded-2xl p-6 border border-slate-800">
-            <h3 className="text-lg font-bold text-white mb-4">📌 使い方の流れ</h3>
-            <ol className="text-sm text-slate-300 space-y-2 list-decimal list-inside">
-              <li><strong className="text-white">職員情報入力</strong> … 職員を登録し、各モダリティの配置スコア（0〜4）を設定</li>
-              <li><strong className="text-white">モダリティ情報入力</strong> … 配置先モダリティを追加し、必要人数（一律 or 曜日別）を設定</li>
-              <li><strong className="text-white">当番表作成</strong> … 期間を決めてカレンダーを生成し、夜勤・日勤の順番・ペアを設定して保存</li>
-              <li><strong className="text-white">休暇・出張管理</strong> … 休暇・出張の日付と職員を登録して保存</li>
-              <li><strong className="text-white">配置表作成</strong> … 当番表の期間を読み込み、「自動配置」でスコアに基づき割り当て。必要に応じて保存・CSV出力</li>
-            </ol>
-          </div>
-
-          <div className="bg-slate-900/30 backdrop-blur-sm rounded-2xl p-6 border border-slate-800">
-            <h3 className="text-lg font-bold text-white mb-4">⚙️ 配置スコア（職員情報入力で設定）</h3>
-            <p className="text-slate-400 text-sm mb-3">各職員について、モダリティごとに 0〜4 のスコアを付けます。</p>
-            <div className="bg-slate-800/30 border border-slate-700/50 p-4 rounded-xl text-sm space-y-2 text-slate-300">
-              <div><strong className="text-violet-300">0</strong> … 適正なし（このモダリティには配置しない）</div>
-              <div><strong className="text-violet-300">1</strong> … 優先度低</div>
-              <div><strong className="text-violet-300">2</strong> … 優先度中</div>
-              <div><strong className="text-violet-300">3</strong> … 優先度高</div>
-              <div><strong className="text-violet-300">4</strong> … 絶対固定（必ずこのモダリティに配置する）</div>
+        <div className="flex gap-6">
+          {/* 左: ボタン一覧 */}
+          <div className="w-[520px] min-w-[520px] shrink-0 flex flex-col">
+            <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-md">
+              <h3 className="text-lg font-bold text-stone-800 mb-3">メニューを選択</h3>
+              <div className="grid grid-cols-1 gap-2">
+                {MENU_ITEMS.map(({ id, label, icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setSelectedId(selectedId === id ? null : id)}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 text-left font-semibold text-lg transition-all ${
+                      selectedId === id
+                        ? 'bg-violet-100 border-violet-500 text-violet-900 ring-2 ring-violet-200'
+                        : 'bg-white border-slate-300 text-stone-800 hover:border-slate-400 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="text-xl shrink-0">{icon}</span>
+                    <span className="truncate">{label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="bg-slate-900/30 backdrop-blur-sm rounded-2xl p-6 border border-slate-800">
-            <h3 className="text-lg font-bold text-white mb-4">📅 当番表で決まる「配置対象外」</h3>
-            <p className="text-slate-400 text-sm mb-3">当番表で次のいずれかに割り当てられた職員は、その日は配置表のモダリティに配置されません。</p>
-            <ul className="text-sm text-slate-300 space-y-1 list-disc list-inside">
-              <li>夜勤（16）・日勤・サポート・B・非番</li>
-              <li>週休（当番表の「週休」に登録された職員）</li>
-              <li>休暇・出張管理で登録した日の職員</li>
-            </ul>
-          </div>
-
-          <div className="bg-slate-900/30 backdrop-blur-sm rounded-2xl p-6 border border-slate-800">
-            <h3 className="text-lg font-bold text-white mb-4">✓ 自動配置のルール</h3>
-            <ul className="text-sm text-slate-300 space-y-2">
-              <li>平日（土日・祝日を除く）の各日について、各モダリティの必要人数まで職員を割り当てます。</li>
-              <li>必要人数はモダリティ情報入力で設定します。一律の場合は「AM○名・PM○名」、曜日別の場合は「月〜金」ごとに「AM○・PM○」を設定できます。</li>
-              <li>スコア 0 の職員はそのモダリティには配置されません。</li>
-              <li>スコア 4（絶対固定）の職員を優先して配置し、残りをスコアの高い順に埋めます。</li>
-              <li>1人の職員は1日1つのモダリティのみ配置されます。</li>
-            </ul>
+          {/* 右: 解説 */}
+          <div className="flex-1 min-w-0">
+            <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-md min-h-[400px]">
+              {selectedId && EXPLANATIONS[selectedId] ? (
+                <>
+                  <h3 className="text-2xl font-bold text-stone-800 mb-4">{EXPLANATIONS[selectedId].title}</h3>
+                  <div className="text-stone-700">{EXPLANATIONS[selectedId].body}</div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center min-h-[360px] text-stone-600 text-lg">
+                  <p className="mb-2">左のボタンからメニューを選択すると、</p>
+                  <p>ここに解説が表示されます。</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

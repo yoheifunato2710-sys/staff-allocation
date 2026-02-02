@@ -5,19 +5,23 @@ const STORAGE_KEY = 'mainMenuCalendarComments';
 const STORAGE_KEY_MONTHLY = 'mainMenuMonthlyComments';
 
 function getBackupFilename() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const sec = String(d.getSeconds()).padStart(2, '0');
+  const timeStr = `${h}${min}${sec}`;
   try {
     const raw = localStorage.getItem('allocationData');
     if (raw) {
       const data = JSON.parse(raw);
       const dateStr = data.startDate || data.endDate;
-      if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return `backup-${dateStr}.json`;
+      if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return `backup-${dateStr}-${timeStr}.json`;
     }
   } catch (_) {}
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `backup-${y}-${m}-${day}.json`;
+  return `backup-${y}-${m}-${day}-${timeStr}.json`;
 }
 
 function downloadBackup() {
@@ -241,23 +245,23 @@ export default function MainMenu({ onNavigate }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex p-5 relative overflow-hidden">
-      <div className="absolute inset-0">
-        <div className="absolute top-20 left-20 w-96 h-96 bg-violet-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-20 right-20 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl" />
+    <div className="min-h-screen bg-violet-400 flex p-5 relative overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-20 left-20 w-96 h-96 bg-violet-200/30 rounded-full blur-3xl" />
+        <div className="absolute bottom-20 right-20 w-96 h-96 bg-cyan-200/30 rounded-full blur-3xl" />
       </div>
 
       <div className="relative flex flex-col gap-0 w-full max-w-6xl mx-auto flex-1 min-h-0">
         {/* 左：ボタン / 右：カレンダー */}
         <div className="flex gap-6 w-full items-stretch flex-1 min-h-0">
-          <div className="shrink-0 w-[260px] flex flex-col min-h-0">
-            <div className="flex-1 flex flex-col gap-2 min-h-0">
-              <MenuButton compact className="flex-1 min-h-0" icon="📝" title="職員情報入力" detail="職員の登録・編集・管理" onClick={() => onNavigate('staff-db')} accent="violet" />
-              <MenuButton compact className="flex-1 min-h-0" icon="⚙️" title="モダリティ情報入力" detail="モダリティの設定・追加" onClick={() => onNavigate('modality-db')} accent="cyan" />
-              <MenuButton compact className="flex-1 min-h-0" icon="🏖️" title="休暇・出張管理" detail="休暇・出張の入力・管理" onClick={() => onNavigate('leave-input')} accent="rose" />
-              <MenuButton compact className="flex-1 min-h-0" icon="🗓️" title="当番表作成" detail="夜勤・日勤・週休の作成" onClick={() => onNavigate('shift-schedule')} accent="amber" />
-              <MenuButton compact className="flex-1 min-h-0" icon="📊" title="配置表作成" detail="自動配置の作成" onClick={() => onNavigate('allocation')} accent="indigo" />
-              <MenuButton compact className="flex-1 min-h-0" icon="📜" title="ルール確認" detail="配置ルールの確認" onClick={() => onNavigate('rules')} accent="emerald" />
+          <div className="shrink-0 w-[520px] flex flex-col min-h-0 bg-slate-50 rounded-2xl border-2 border-slate-400 shadow-sm p-2">
+            <div className="flex-1 flex flex-col gap-1.5 min-h-0 min-w-0">
+              <MenuButton compact className="flex-1 min-h-[56px]" icon="📝" title="職員情報入力" detail="職員の登録・編集、各モダリティの配置スコア（0〜4）を設定" onClick={() => onNavigate('staff-db')} accent="violet" />
+              <MenuButton compact className="flex-1 min-h-[56px]" icon="⚙️" title="モダリティ情報入力" detail="配置先モダリティの追加、必要人数（一律または曜日別）の設定" onClick={() => onNavigate('modality-db')} accent="cyan" />
+              <MenuButton compact className="flex-1 min-h-[56px]" icon="🏖️" title="休暇・出張入力" detail="休暇・出張の日付と職員を登録し、カレンダーに反映" onClick={() => onNavigate('leave-input')} accent="rose" />
+              <MenuButton compact className="flex-1 min-h-[56px]" icon="🗓️" title="当番表作成" detail="期間を設定し、夜勤・日勤・週休の順番・ペアを割り当てて保存" onClick={() => onNavigate('shift-schedule')} accent="amber" />
+              <MenuButton compact className="flex-1 min-h-[56px]" icon="📊" title="配置表作成" detail="当番表を読み込み、スコアに基づいて自動配置。保存・CSV出力" onClick={() => onNavigate('allocation')} accent="indigo" />
+              <MenuButton compact className="flex-1 min-h-[56px]" icon="📜" title="ルール" detail="使い方の流れ、配置スコア・配置対象外・自動配置のルール確認" onClick={() => onNavigate('rules')} accent="emerald" />
               <input
                 ref={restoreInputRef}
                 type="file"
@@ -269,83 +273,88 @@ export default function MainMenu({ onNavigate }) {
                   e.target.value = '';
                 }}
               />
-              <div className="mt-2 flex flex-col gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={downloadBackup}
-                  className="px-4 py-2.5 bg-slate-700/80 hover:bg-slate-600 border border-slate-600 rounded-xl text-slate-200 text-sm font-medium transition-all flex items-center justify-center gap-2"
-                >
-                  📦 すべての入力情報をバックアップ
-                </button>
-                <button
-                  type="button"
-                  onClick={() => restoreInputRef.current?.click()}
-                  className="px-4 py-2.5 bg-slate-600/80 hover:bg-slate-500 border border-slate-500 rounded-xl text-slate-200 text-sm font-medium transition-all flex items-center justify-center gap-2"
-                >
-                  📥 バックアップから復元
-                </button>
+              <div className="mt-2 pt-2 border-t-2 border-slate-300 shrink-0">
+                <p className="text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5 px-0.5">データのバックアップ</p>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={downloadBackup}
+                    className="pl-3 pr-3 py-2 bg-amber-50 hover:bg-amber-100 border-2 border-amber-400 rounded-xl text-amber-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                  >
+                    <span className="shrink-0 text-lg">📦</span>
+                    <span>今のデータをファイルに保存</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => restoreInputRef.current?.click()}
+                    className="pl-3 pr-3 py-2 bg-violet-50 hover:bg-violet-100 border-2 border-violet-400 rounded-xl text-violet-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                  >
+                    <span className="shrink-0 text-lg">📥</span>
+                    <span>ファイルからデータを復元</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
           {/* カレンダー（職員DBボタン上端と揃う） */}
           <div className="flex-1 min-w-0 flex flex-col">
-            <div className="bg-slate-900/40 backdrop-blur-sm rounded-2xl border border-slate-800 p-6 flex-1 flex flex-col min-h-0">
-            <div className="flex items-center justify-center gap-4 mb-4 shrink-0">
+            <div className="bg-slate-50/95 backdrop-blur-sm rounded-2xl border-2 border-slate-400 shadow-sm p-4 flex-1 flex flex-col min-h-0">
+            <div className="flex items-center justify-center gap-3 mb-3 shrink-0">
               <button
                 type="button"
                 onClick={() => changeMonth(-1)}
-                className="p-2 rounded-xl bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700 text-slate-300 hover:text-white transition-all shrink-0"
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-400 text-stone-600 hover:text-stone-800 transition-all shrink-0"
                 aria-label="前月"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
-              <h2 className="text-2xl font-bold text-white min-w-[140px] text-center">
+              <h2 className="text-xl font-bold text-stone-900 min-w-[120px] text-center">
                 {year}年 {month + 1}月
               </h2>
               <button
                 type="button"
                 onClick={() => changeMonth(1)}
-                className="p-2 rounded-xl bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700 text-slate-300 hover:text-white transition-all shrink-0"
+                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-400 text-stone-600 hover:text-stone-800 transition-all shrink-0"
                 aria-label="次月"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </button>
             </div>
-            <div className="grid grid-cols-7 gap-2">
+            <div className="grid grid-cols-7 gap-1.5">
               {weekLabels.map((label, i) => (
                 <div
                   key={label}
-                  className={`text-center text-sm font-semibold py-2 ${i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-slate-400'}`}
+                  className={`text-center text-sm font-semibold py-1 ${i === 0 ? 'text-red-600' : i === 6 ? 'text-blue-700' : 'text-stone-600'}`}
                 >
                   {label}
                 </div>
               ))}
               {days.map((cell, idx) => {
                 if (!cell) {
-                  return <div key={`empty-${idx}`} className="min-h-[88px]" />;
+                  return <div key={`empty-${idx}`} className="min-h-[68px]" />;
                 }
                 const comment = comments[cell.dateStr];
                 const isSun = cell.dayOfWeek === 0;
                 const isSat = cell.dayOfWeek === 6;
                 const isHoliday = holidays.has(cell.dateStr);
-                const dayColor = isHoliday || isSun ? 'text-red-400' : isSat ? 'text-blue-400' : 'text-white';
+                const dayColor = isHoliday || isSun ? 'text-red-700' : isSat ? 'text-blue-700' : 'text-stone-900';
                 return (
                   <button
                     key={cell.dateStr}
                     type="button"
                     onClick={() => openComment(cell.dateStr)}
-                    className={`min-h-[88px] p-2.5 rounded-lg border border-slate-700/50 hover:border-violet-500/50 hover:bg-slate-800/50 text-left transition-all flex flex-col ${isSun || isSat ? 'bg-slate-800/20' : 'bg-slate-800/10'}`}
+                    className={`min-h-[68px] p-2 rounded-lg border-2 border-slate-400 hover:border-violet-500 hover:bg-violet-50/50 text-left transition-all flex flex-col ${isSun || isSat ? 'bg-slate-100' : 'bg-slate-50/50'}`}
                   >
-                    <span className={`text-base font-bold ${dayColor} shrink-0`}>
+                    <span className={`text-lg font-bold ${dayColor} shrink-0`}>
                       {cell.day}
                     </span>
                     {comment ? (
-                      <span className="mt-1.5 text-[11px] text-slate-300 leading-tight break-words line-clamp-2 block min-h-[2rem]">
+                      <span className="mt-0.5 text-sm text-stone-700 leading-tight break-words line-clamp-2 block font-medium">
                         {comment}
                       </span>
                     ) : null}
@@ -353,15 +362,15 @@ export default function MainMenu({ onNavigate }) {
                 );
               })}
             </div>
-            <p className="text-slate-500 text-xs mt-3 shrink-0">日付をクリックでコメントを追加・編集</p>
+            <p className="text-stone-700 text-sm mt-2 shrink-0 font-medium">日付をクリックでコメントを追加・編集</p>
 
-            <div className="mt-4 flex-1 flex flex-col min-h-0">
-              <label className="block text-slate-400 text-sm font-semibold mb-2 shrink-0">{year}年{month + 1}月のメモ</label>
+            <div className="mt-3 flex-1 flex flex-col min-h-0 min-w-0">
+              <label className="block text-stone-800 text-base font-semibold mb-1.5 shrink-0">{year}年{month + 1}月のメモ</label>
               <textarea
                 value={monthlyComment}
                 onChange={(e) => saveMonthlyComment(e.target.value)}
                 placeholder="月ごとの自由メモ..."
-                className="w-full flex-1 min-h-[120px] p-3 bg-slate-800/50 border-2 border-slate-700 rounded-xl text-white placeholder-slate-500 focus:border-violet-500/50 outline-none resize-none text-sm"
+                className="w-full flex-1 min-h-[80px] p-2.5 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-900 placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-none text-base font-medium"
               />
             </div>
           </div>
@@ -371,14 +380,14 @@ export default function MainMenu({ onNavigate }) {
 
       {/* コメント編集モーダル */}
       {selectedDate !== null && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-stone-50 border-2 border-stone-300 rounded-2xl p-6 w-full max-w-md shadow-xl">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-white text-lg">{selectedDate} のコメント</h3>
+              <h3 className="font-bold text-stone-800 text-lg">{selectedDate} のコメント</h3>
               <button
                 type="button"
                 onClick={() => closeComment('')}
-                className="text-slate-400 hover:text-white text-2xl leading-none"
+                className="text-stone-400 hover:text-stone-600 text-2xl leading-none"
               >
                 ×
               </button>
@@ -394,20 +403,20 @@ export default function MainMenu({ onNavigate }) {
                 value={editComment}
                 onChange={handleEditChange}
                 placeholder="メモを入力..."
-                className="w-full p-3 bg-slate-800 border-2 border-slate-700 rounded-xl text-white placeholder-slate-500 focus:border-violet-500 outline-none resize-y min-h-[120px]"
+                className="w-full p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-900 text-lg font-medium placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-y min-h-[120px]"
                 rows={4}
               />
               <div className="flex gap-2 mt-4">
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold transition-all"
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm"
                 >
-                  保存
+                  OK
                 </button>
                 <button
                   type="button"
                   onClick={() => closeComment('')}
-                  className="py-2.5 px-4 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl font-medium transition-all"
+                  className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-lg font-medium transition-all"
                 >
                   クリア
                 </button>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '../context/DataContext';
 import { downloadCSV } from '../utils/csv';
 
@@ -10,6 +10,7 @@ export default function AllocationScreen({ onBack }) {
   const [calendar, setCalendar] = useState([]);
   const [isAutoAllocating, setIsAutoAllocating] = useState(false);
 
+  const allocationLoaded = useRef(false);
   useEffect(() => {
     const scheduleData = localStorage.getItem('scheduleData');
     if (scheduleData) {
@@ -18,6 +19,17 @@ export default function AllocationScreen({ onBack }) {
       setEndDate(data.endDate || '');
       setCalendar(data.calendar || []);
     }
+    const allocationData = localStorage.getItem('allocationData');
+    if (allocationData) {
+      try {
+        const data = JSON.parse(allocationData);
+        if (data.allocation) setAllocation(data.allocation);
+        if (data.startDate) setStartDate(data.startDate);
+        if (data.endDate) setEndDate(data.endDate);
+      } catch (_) {}
+    }
+    const t = setTimeout(() => { allocationLoaded.current = true; }, 300);
+    return () => clearTimeout(t);
   }, []);
 
   const autoAllocate = () => {
@@ -72,20 +84,20 @@ export default function AllocationScreen({ onBack }) {
         }
 
         const assignSlot = (requiredCount) => {
-          const availableStaff = staffData
+          const withScore = staffData
             .filter(staff => !unavailableStaff.has(staff.id))
-            .map(staff => ({ ...staff, score: staff.scores[modalityId] || 0 }))
-            .filter(staff => staff.score > 0)
-            .sort((a, b) => b.score - a.score);
+            .map(staff => ({ ...staff, score: staff.scores[modalityId] ?? 0 }));
+          const forRequired = withScore.filter(s => s.score >= 1 && s.score <= 4).sort((a, b) => b.score - a.score);
+          const forTraining = withScore.filter(s => s.score === 5);
           const assigned = [];
-          availableStaff.forEach(staff => {
-            if (staff.score === 4 && assigned.length < requiredCount) {
+          forRequired.forEach(staff => {
+            if (assigned.length < requiredCount) {
               assigned.push(staff.id);
               unavailableStaff.add(staff.id);
             }
           });
-          availableStaff.forEach(staff => {
-            if (staff.score < 4 && assigned.length < requiredCount && !unavailableStaff.has(staff.id)) {
+          forTraining.forEach(staff => {
+            if (!unavailableStaff.has(staff.id)) {
               assigned.push(staff.id);
               unavailableStaff.add(staff.id);
             }
@@ -137,10 +149,10 @@ export default function AllocationScreen({ onBack }) {
     return '-';
   };
 
-  const saveAllocation = () => {
+  useEffect(() => {
+    if (!allocationLoaded.current) return;
     localStorage.setItem('allocationData', JSON.stringify({ allocation, startDate, endDate }));
-    alert('✅ 配置表を保存しました');
-  };
+  }, [allocation, startDate, endDate]);
 
   const exportAllocationCSV = () => {
     if (calendar.length === 0) {
@@ -159,78 +171,84 @@ export default function AllocationScreen({ onBack }) {
   };
 
   const colorMap = {
-    '16': 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-    '日勤': 'bg-green-500/20 text-green-300 border-green-500/30',
-    'サポート': 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
-    'B': 'bg-orange-500/20 text-orange-300 border-orange-500/30',
-    '非番': 'bg-red-500/20 text-red-300 border-red-500/30',
-    '週休': 'bg-violet-500/20 text-violet-300 border-violet-500/30',
-    '年休': 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-    'リフ休': 'bg-purple-500/20 text-purple-300 border-purple-500/30',
-    '特別休': 'bg-amber-500/20 text-amber-300 border-amber-500/30',
-    '出張': 'bg-pink-500/20 text-pink-300 border-pink-500/30',
-    '-': 'text-slate-600'
+    '16': 'bg-blue-100 text-blue-800 border-blue-200',
+    '日勤': 'bg-green-100 text-green-800 border-green-200',
+    'サポート': 'bg-yellow-100 text-yellow-800 border-yellow-200',
+    'B': 'bg-orange-100 text-orange-800 border-orange-200',
+    '非番': 'bg-red-100 text-red-800 border-red-200',
+    '週休': 'bg-violet-100 text-violet-800 border-violet-200',
+    '年休': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    'リフ休': 'bg-purple-100 text-purple-800 border-purple-200',
+    '特別休': 'bg-amber-100 text-amber-800 border-amber-200',
+    '出張': 'bg-pink-100 text-pink-800 border-pink-200',
+    '-': 'text-stone-600 bg-slate-50 border-slate-300'
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 p-5 relative overflow-hidden">
-      <div className="absolute top-20 right-20 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
+    <div className="min-h-screen bg-violet-400 p-5 relative overflow-hidden">
+      <div className="absolute top-20 right-20 w-96 h-96 bg-indigo-200/30 rounded-full blur-3xl pointer-events-none" />
 
       <div className="max-w-full mx-auto relative px-4">
-        <div className="flex justify-between items-center gap-4 mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-white">配置表作成</h2>
-            {startDate && endDate && <p className="text-slate-500 text-xs mt-0.5">期間: {startDate} 〜 {endDate}</p>}
-          </div>
+        <div className="flex justify-between items-center gap-4 mb-4">
+          <h2 className="text-3xl font-bold text-stone-800">配置表作成</h2>
           <div className="flex items-center gap-2">
-            <button onClick={autoAllocate} disabled={isAutoAllocating} className="px-4 py-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-700 disabled:text-slate-400 text-white rounded-xl text-sm font-medium transition-all">
-              {isAutoAllocating ? '配置中...' : '自動配置'}
-            </button>
-            <button onClick={saveAllocation} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium transition-all">
-              保存
-            </button>
-            <button onClick={exportAllocationCSV} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-sm font-medium transition-all">
-              CSV
-            </button>
-            <button onClick={onBack} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-300 text-sm font-medium transition-all">
+            <button onClick={onBack} className="px-5 py-2.5 bg-slate-50 hover:bg-stone-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
               ← メインメニュー
+            </button>
+            <button onClick={exportAllocationCSV} className="px-5 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-lg font-semibold transition-all">
+              CSV
             </button>
           </div>
         </div>
 
-        <div className="bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl mb-6 text-sm text-indigo-200 backdrop-blur-sm">
-          <strong>📌 注意：</strong> まず「夜勤・日勤当番表」で期間を設定してください。その後、自動配置を実行すると、スコアに基づいて職員を各モダリティに配置します。
+        {/* ワークフロー: 当番表作成 → 週休割り当て → 配置表作成（中央・大きく） */}
+        <div className="mb-6 flex flex-col items-center">
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <span className="px-6 py-3 bg-stone-100 border-2 border-stone-300 rounded-2xl text-stone-800 text-xl font-semibold">当番表作成</span>
+            <span className="text-stone-500 text-2xl font-bold">→</span>
+            <span className="px-6 py-3 bg-stone-100 border-2 border-stone-300 rounded-2xl text-stone-800 text-xl font-semibold">週休割り当て</span>
+            <span className="text-stone-500 text-2xl font-bold">→</span>
+            <button onClick={autoAllocate} disabled={isAutoAllocating || calendar.length === 0} className="px-6 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-stone-200 disabled:text-stone-400 disabled:cursor-not-allowed text-white rounded-2xl text-xl font-semibold transition-all shadow-md">
+              {isAutoAllocating ? '配置中...' : '配置表作成'}
+            </button>
+          </div>
+          {calendar.length === 0 && (
+            <p className="mt-4 text-stone-700 text-xl font-medium text-center">※ 表示する期間がありません</p>
+          )}
+          {startDate && endDate && calendar.length > 0 && (
+            <p className="mt-3 text-stone-600 text-base text-center">期間: {startDate} 〜 {endDate}</p>
+          )}
         </div>
 
         {calendar.length > 0 ? (
-          <div className="bg-slate-900/30 backdrop-blur-sm rounded-2xl p-6 border border-slate-800 overflow-x-auto">
-            <h3 className="font-bold mb-4 text-white text-lg">📊 配置表マトリックス</h3>
+          <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm overflow-x-auto">
+            <h3 className="font-bold mb-4 text-stone-800 text-xl">📊 配置表マトリックス</h3>
             <div className="overflow-x-auto">
               <table className="border-collapse text-xs min-w-full">
                 <thead>
-                  <tr className="bg-slate-800/50">
-                    <th className="border border-slate-700 p-3 sticky left-0 bg-slate-800 z-20 min-w-[120px]"><div className="font-bold text-slate-200 uppercase tracking-wider">職員</div></th>
+                  <tr className="bg-stone-100">
+                    <th className="border border-slate-300 p-3 sticky left-0 bg-stone-100 z-20 min-w-[120px]"><div className="font-bold text-stone-800 uppercase tracking-wider">職員</div></th>
                     {calendar.map(day => (
-                      <th key={day.date} className={`border border-slate-700 p-2 min-w-[80px] ${day.isWeekend ? 'bg-slate-700/50' : ''}`}>
-                        <div className="text-slate-300">{day.date.split('-')[2]}</div>
-                        <div className="text-xs text-slate-500">{day.dayOfWeek}</div>
+                      <th key={day.date} className={`border border-slate-300 p-2 min-w-[80px] ${day.isWeekend ? 'bg-stone-100' : ''}`}>
+                        <div className="text-stone-600">{day.date.split('-')[2]}</div>
+                        <div className="text-xs text-stone-600">{day.dayOfWeek}</div>
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {staffData.map(staff => (
-                    <tr key={staff.id} className="hover:bg-slate-800/30 transition-all">
-                      <td className="border border-slate-700 p-3 font-bold sticky left-0 bg-slate-900/90 z-10 text-white">
+                    <tr key={staff.id} className="hover:bg-slate-50 transition-all">
+                      <td className="border border-slate-300 p-3 font-bold sticky left-0 bg-slate-50 z-10 text-stone-800">
                         <div>{staff.name}</div>
-                        <div className="text-xs text-slate-500">{staff.id}</div>
+                        <div className="text-xs text-stone-600">{staff.id}</div>
                       </td>
                       {calendar.map(day => {
                         const assignment = getStaffAllocation(staff.id, day.date);
                         const isModality = !colorMap[assignment];
-                        const cellClass = isModality ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : colorMap[assignment];
+                        const cellClass = isModality ? 'bg-cyan-100 text-cyan-800 border-cyan-200' : colorMap[assignment];
                         return (
-                          <td key={day.date} className={`border border-slate-700 p-1 text-center ${day.isWeekend ? 'bg-slate-800/30' : ''}`}>
+                          <td key={day.date} className={`border border-slate-300 p-1 text-center ${day.isWeekend ? 'bg-slate-50' : ''}`}>
                             <div className={`text-xs py-1 px-2 rounded border ${cellClass} font-semibold`}>{assignment}</div>
                           </td>
                         );
@@ -241,20 +259,14 @@ export default function AllocationScreen({ onBack }) {
               </table>
             </div>
             <div className="mt-6 grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
-              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-cyan-500/20 border border-cyan-500/30 rounded" /><span className="text-slate-300">モダリティ配置</span></div>
-              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-blue-500/20 border border-blue-500/30 rounded" /><span className="text-slate-300">16(夜勤)</span></div>
-              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-green-500/20 border border-green-500/30 rounded" /><span className="text-slate-300">日勤</span></div>
-              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-violet-500/20 border border-violet-500/30 rounded" /><span className="text-slate-300">週休</span></div>
-              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-emerald-500/20 border border-emerald-500/30 rounded" /><span className="text-slate-300">休暇</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-cyan-100 border border-cyan-200 rounded" /><span className="text-stone-600">モダリティ配置</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-blue-100 border border-blue-200 rounded" /><span className="text-stone-600">16(夜勤)</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-green-100 border border-green-200 rounded" /><span className="text-stone-600">日勤</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-violet-100 border border-violet-200 rounded" /><span className="text-stone-600">週休</span></div>
+              <div className="flex items-center gap-2"><div className="w-4 h-4 bg-emerald-100 border border-emerald-200 rounded" /><span className="text-stone-600">休暇</span></div>
             </div>
           </div>
-        ) : (
-          <div className="bg-slate-900/30 backdrop-blur-sm rounded-2xl p-20 text-center border border-slate-800">
-            <div className="text-6xl mb-4">📅</div>
-            <div className="text-slate-400 text-xl mb-2">カレンダーがありません</div>
-            <div className="text-slate-500 text-sm">「夜勤・日勤当番表」で期間を設定してください</div>
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

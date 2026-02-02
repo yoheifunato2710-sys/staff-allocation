@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DataProvider } from './context/DataContext';
 import MainMenu from './screens/MainMenu';
 import ModalityDB from './screens/ModalityDB';
@@ -13,6 +13,16 @@ function AppContent() {
   const [currentScreen, setCurrentScreen] = useState('main-menu');
   const [showStaffForm, setShowStaffForm] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = 'バックアップを取得しましたか？データが失われる可能性があります。';
+      return e.returnValue;
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   const onBack = () => setCurrentScreen('main-menu');
   const onNavigate = (screen) => setCurrentScreen(screen);
@@ -48,7 +58,7 @@ function AppContent() {
     }
   };
 
-  return <div>{renderScreen()}</div>;
+  return <div className="w-full min-h-screen min-w-0">{renderScreen()}</div>;
 }
 
 export default function App() {

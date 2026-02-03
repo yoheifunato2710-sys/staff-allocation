@@ -649,10 +649,12 @@ export default function ShiftScheduleScreen({ onBack }) {
                               : (field === 'support'
                                 ? (supportFromPair ?? leftOverrides[day.date]?.support ?? schedule[day.date]?.support ?? '')
                                 : ((leftOverrides[day.date] && leftOverrides[day.date][field]) ?? (schedule[day.date] && schedule[day.date][field]) ?? ''));
-                          const leftIsEdited = leftOverrides[day.date]?.[field] !== undefined;
+                          const leftDay = leftOverrides[day.date];
+                          const leftIsEdited = leftDay != null && leftDay[field] !== undefined;
+                          const rightDay = manualOverrides[day.date];
                           const rightValue = field === 'b'
-                            ? (manualOverrides[day.date]?.b ?? '')
-                            : (manualOverrides[day.date]?.[field] ?? '');
+                            ? (rightDay?.b ?? '')
+                            : (rightDay != null ? rightDay[field] ?? '' : '');
                           return (
                             <React.Fragment key={field}>
                               <td className={`p-0.5 text-center text-xs ${slotColor} overflow-hidden align-middle border border-slate-400 ${hasFrame ? `border-t-2 border-b-2 ${frameColor}` : ''} ${isConflict ? 'text-white' : leftIsEdited ? 'text-red-600' : 'text-stone-800'}`} style={{ minWidth: 0 }}>

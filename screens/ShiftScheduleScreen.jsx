@@ -642,13 +642,18 @@ export default function ShiftScheduleScreen({ onBack }) {
                           const rawLeftB = leftOverrides[day.date]?.b ?? schedule[day.date]?.b;
                           const isFirstDay = calendar.length > 0 && day.date === calendar[0].date;
                           const firstDayDayOff = isFirstDay && field === 'dayOff' && effectiveNightOrder.length > 0 ? effectiveNightOrder[effectiveNightOrder.length - 1] : null;
-                          const leftValue = field === 'b' && isSurgery
-                            ? (rawLeftB ?? getNextDayNightShift(day.date) ?? '')
-                            : (field === 'dayOff' && isFirstDay
-                              ? (leftOverrides[day.date]?.dayOff ?? schedule[day.date]?.dayOff ?? firstDayDayOff ?? '')
-                              : (field === 'support'
-                                ? (supportFromPair ?? leftOverrides[day.date]?.support ?? schedule[day.date]?.support ?? '')
-                                : ((leftOverrides[day.date] && leftOverrides[day.date][field]) ?? (schedule[day.date] && schedule[day.date][field]) ?? ''));
+                          let leftValue = '';
+                          if (field === 'b' && isSurgery) {
+                            leftValue = rawLeftB ?? getNextDayNightShift(day.date) ?? '';
+                          } else if (field === 'dayOff' && isFirstDay) {
+                            leftValue = leftOverrides[day.date]?.dayOff ?? schedule[day.date]?.dayOff ?? firstDayDayOff ?? '';
+                          } else if (field === 'support') {
+                            leftValue = supportFromPair ?? leftOverrides[day.date]?.support ?? schedule[day.date]?.support ?? '';
+                          } else {
+                            const lo = leftOverrides[day.date];
+                            const sc = schedule[day.date];
+                            leftValue = (lo && lo[field]) ?? (sc && sc[field]) ?? '';
+                          }
                           const leftDay = leftOverrides[day.date];
                           const leftIsEdited = leftDay != null && leftDay[field] !== undefined;
                           const rightDay = manualOverrides[day.date];

@@ -76,47 +76,82 @@ export default function ModalityDB({ onBack }) {
     setModalityData(prev => prev.map(m => m.id === id ? { ...m, note } : m));
   };
 
+  const moveModality = (id, direction) => {
+    const idx = modalityData.findIndex(m => m.id === id);
+    if (idx < 0) return;
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= modalityData.length) return;
+    setModalityData(prev => {
+      const arr = [...prev];
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      return arr;
+    });
+  };
+
   return (
-    <div className="min-h-screen w-full min-w-0 bg-violet-400 p-5 relative overflow-hidden box-border">
+    <div className="h-screen flex flex-col w-full min-w-0 bg-violet-400 p-5 relative overflow-hidden box-border">
       <div className="absolute top-20 right-20 w-96 h-96 bg-violet-400/30 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="relative flex flex-col h-full w-full min-w-0 max-w-full">
+      <div className="relative flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-full">
         <div className="flex justify-between items-center mb-4 shrink-0">
           <h2 className="text-3xl font-bold text-stone-800">モダリティ情報入力</h2>
           <div className="flex items-center gap-2">
-            <button onClick={addModality} className="px-5 py-2.5 bg-violet-500 hover:bg-violet-400 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
+            <button onClick={addModality} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
               ➕ 追加
             </button>
-            <button onClick={onBack} className="px-5 py-2.5 bg-stone-50 hover:bg-slate-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
+            <button onClick={onBack} className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-semibold transition-all shadow-sm">
               ← メインメニュー
             </button>
           </div>
         </div>
 
         <div className="flex gap-6 flex-1 min-h-0 min-w-0 w-full">
-          {/* 左: モダリティ一覧 */}
-          <div className="w-[520px] min-w-[520px] shrink-0 flex flex-col">
+          {/* 左: モダリティ一覧（このエリアのみスクロール） */}
+          <div className="w-[520px] min-w-[520px] shrink-0 flex flex-col min-h-0">
             {modalityData.length === 0 ? (
               <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-8 text-center shadow-md">
                 <p className="text-stone-700 text-xl mb-5">モダリティがありません</p>
-                <button onClick={addModality} className="px-5 py-2.5 bg-violet-500 hover:bg-violet-400 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
+                <button onClick={addModality} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
                   ➕ モダリティを追加
                 </button>
               </div>
             ) : (
-              <div className="space-y-2 overflow-y-auto pr-1">
-                {modalityData.map((mod) => (
+              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-2 pr-1">
+                {modalityData.map((mod, index) => (
                   <div
                     key={mod.id}
                     className={`rounded-xl border-2 overflow-hidden shadow-md cursor-pointer transition-all ${
                       expandedId === mod.id
-                        ? 'border-violet-500 bg-violet-50/80 ring-2 ring-violet-200'
+                        ? 'border-blue-500 bg-blue-50/80 ring-2 ring-blue-200'
                         : 'border-slate-400 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-500'
                     }`}
                     onClick={() => setExpandedId(mod.id)}
                   >
                     <div className="flex items-center gap-2 px-3 py-3">
-                      <span className="text-stone-700 text-lg font-semibold w-7 shrink-0">{mod.id}</span>
+                      <div
+                        className="flex flex-col shrink-0 gap-0.5"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => moveModality(mod.id, 'up')}
+                          disabled={index === 0}
+                          className="p-1 rounded text-slate-600 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                          title="上へ"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveModality(mod.id, 'down')}
+                          disabled={index === modalityData.length - 1}
+                          className="p-1 rounded text-slate-600 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                          title="下へ"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                      <span className="text-stone-700 text-lg font-semibold w-7 shrink-0">{index + 1}</span>
                       <span className="flex-1 min-w-0 font-semibold text-stone-900 text-lg truncate">{mod.name || '（未入力）'}</span>
                       <span className="text-stone-600 text-base shrink-0">{getSimplifiedInfo(mod)}</span>
                       {mod.note ? <span className="text-stone-500 text-base shrink-0" title={mod.note}>📝</span> : null}
@@ -154,14 +189,14 @@ export default function ModalityDB({ onBack }) {
                           <button
                             type="button"
                             onClick={() => changeStaffMode(mod.id, 'uniform')}
-                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'uniform' ? 'bg-violet-500 text-white shadow-sm' : 'bg-slate-100 text-stone-700 hover:bg-stone-200'}`}
+                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'uniform' ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
                           >
                             一律
                           </button>
                           <button
                             type="button"
                             onClick={() => changeStaffMode(mod.id, 'individual')}
-                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'individual' ? 'bg-violet-500 text-white shadow-sm' : 'bg-slate-100 text-stone-700 hover:bg-stone-200'}`}
+                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'individual' ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
                           >
                             曜日別
                           </button>
@@ -243,7 +278,7 @@ export default function ModalityDB({ onBack }) {
                         <button
                           type="button"
                           onClick={() => setExpandedId(null)}
-                          className="px-5 py-2.5 bg-slate-100 hover:bg-stone-200 text-stone-800 rounded-xl text-lg font-semibold transition-all"
+                          className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 text-slate-800 rounded-xl text-lg font-semibold transition-all"
                         >
                           閉じる
                         </button>

@@ -8,7 +8,7 @@ export default function PlaceholderScreen({ title, onBack }) {
       <div className="max-w-4xl mx-auto relative">
         <div className="flex justify-between items-center gap-4 mb-4">
           <h2 className="text-3xl font-bold text-stone-800">{title}</h2>
-<button onClick={onBack} className="px-4 py-2.5 bg-stone-50 hover:bg-slate-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-medium transition-all shadow-sm">
+<button onClick={onBack} className="px-4 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-medium transition-all shadow-sm">
           ← メインメニュー
           </button>
         </div>

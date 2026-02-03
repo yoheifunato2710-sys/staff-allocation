@@ -1,5 +1,40 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '../context/DataContext';
+
+const MAX_UNDO = 50;
+
+/** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
+function getHolidays(year) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const set = new Set();
+  set.add(`${year}-01-01`); // 元日
+  set.add(`${year}-02-11`); // 建国記念の日
+  set.add(`${year}-02-23`); // 天皇誕生日
+  set.add(`${year}-04-29`); // 昭和の日
+  set.add(`${year}-05-03`); // 憲法記念日
+  set.add(`${year}-05-04`); // みどりの日
+  set.add(`${year}-05-05`); // こどもの日
+  set.add(`${year}-08-11`); // 山の日
+  set.add(`${year}-11-03`); // 文化の日
+  set.add(`${year}-11-23`); // 勤労感謝の日
+  // 海の日: 2020年以降は7月22日固定、それ以前は7月第3月曜
+  if (year >= 2020) set.add(`${year}-07-22`);
+  const nthMonday = (m, n) => {
+    const first = new Date(year, m - 1, 1);
+    const day = first.getDay();
+    const d = 1 + (n - 1) * 7 + (8 - day) % 7;
+    return `${year}-${pad(m)}-${pad(d)}`;
+  };
+  set.add(nthMonday(1, 2));  // 成人の日
+  if (year < 2020) set.add(nthMonday(7, 3)); // 海の日（2020未満は7月第3月曜）
+  set.add(nthMonday(9, 3));  // 敬老の日
+  set.add(nthMonday(10, 2)); // スポーツの日
+  const vernal = year <= 2099 ? Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 20;
+  const autumnal = year <= 2099 ? Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 23;
+  set.add(`${year}-03-${pad(vernal)}`);
+  set.add(`${year}-09-${pad(autumnal)}`);
+  return set;
+}
 
 export default function ShiftScheduleScreen({ onBack }) {
   const { staffData } = useData();
@@ -7,6 +42,7 @@ export default function ShiftScheduleScreen({ onBack }) {
   const [endDate, setEndDate] = useState('');
   const [calendar, setCalendar] = useState([]);
   const [surgeryDays, setSurgeryDays] = useState([]);
+  const [internalMedicineDays, setInternalMedicineDays] = useState([]);
   const [nightShiftOrder, setNightShiftOrder] = useState([]);
   const [dayShiftOrder, setDayShiftOrder] = useState([]);
   const [pairs, setPairs] = useState([]);
@@ -15,7 +51,34 @@ export default function ShiftScheduleScreen({ onBack }) {
   const [showNightShiftModal, setShowNightShiftModal] = useState(false);
   const [showDayShiftModal, setShowDayShiftModal] = useState(false);
   const [showPairModal, setShowPairModal] = useState(false);
-  const [showMatrix, setShowMatrix] = useState(false);
+  const [pairIncompleteFirst, setPairIncompleteFirst] = useState(null);
+  const [manualPicker, setManualPicker] = useState(null); // { date, field } 手動変更用（右列）
+  const [editPicker, setEditPicker] = useState(null); // { date, field } 左列（自動値）の変更用
+  const [nightShiftStartId, setNightShiftStartId] = useState(null); // その月の夜勤開始の人
+  const [dayShiftStartId, setDayShiftStartId] = useState(null); // その月の日勤開始の人
+  const [showNightStartPicker, setShowNightStartPicker] = useState(false);
+  const [showDayStartPicker, setShowDayStartPicker] = useState(false);
+  const undoHistoryRef = useRef([]);
+  const [undoCount, setUndoCount] = useState(0);
+
+  const pushUndoState = () => {
+    undoHistoryRef.current.push({
+      schedule: JSON.parse(JSON.stringify(schedule)),
+      surgeryDays: [...surgeryDays],
+      internalMedicineDays: [...internalMedicineDays]
+    });
+    if (undoHistoryRef.current.length > MAX_UNDO) undoHistoryRef.current.shift();
+    setUndoCount(undoHistoryRef.current.length);
+  };
+
+  const undo = () => {
+    if (undoHistoryRef.current.length === 0) return;
+    const prev = undoHistoryRef.current.pop();
+    setSchedule(prev.schedule);
+    setSurgeryDays(prev.surgeryDays);
+    setInternalMedicineDays(prev.internalMedicineDays);
+    setUndoCount(undoHistoryRef.current.length);
+  };
 
   const generateCalendar = () => {
     if (!startDate || !endDate) {
@@ -34,12 +97,14 @@ export default function ShiftScheduleScreen({ onBack }) {
       const dateStr = current.toISOString().split('T')[0];
       const dayOfWeek = current.getDay();
       const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+      const year = current.getFullYear();
+      const holidays = getHolidays(year);
       days.push({
         date: dateStr,
         dayOfWeek: ['日', '月', '火', '水', '木', '金', '土'][dayOfWeek],
         dayOfWeekNum: dayOfWeek,
         isWeekend,
-        isHoliday: false
+        isHoliday: holidays.has(dateStr)
       });
       current.setDate(current.getDate() + 1);
     }
@@ -51,9 +116,38 @@ export default function ShiftScheduleScreen({ onBack }) {
     setSurgeryDays(prev => (prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date]));
   };
 
+  const toggleInternalMedicineDay = (date) => {
+    setInternalMedicineDays(prev => (prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date]));
+  };
+
   const autoAssign = () => {
-    if (calendar.length === 0) {
-      alert('⚠️ まずカレンダーを生成してください');
+    let cal = calendar;
+    if (cal.length === 0 && startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (start <= end) {
+        const days = [];
+        const current = new Date(start);
+        while (current <= end) {
+          const dateStr = current.toISOString().split('T')[0];
+          const dayOfWeek = current.getDay();
+          const year = current.getFullYear();
+          const holidays = getHolidays(year);
+          days.push({
+            date: dateStr,
+            dayOfWeek: ['日', '月', '火', '水', '木', '金', '土'][dayOfWeek],
+            dayOfWeekNum: dayOfWeek,
+            isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+            isHoliday: holidays.has(dateStr)
+          });
+          current.setDate(current.getDate() + 1);
+        }
+        setCalendar(days);
+        cal = days;
+      }
+    }
+    if (cal.length === 0) {
+      alert('⚠️ 開始日・終了日を入力してください');
       return;
     }
     if (nightShiftOrder.length === 0) {
@@ -61,11 +155,23 @@ export default function ShiftScheduleScreen({ onBack }) {
       return;
     }
     const newSchedule = {};
-    let nightIndex = 0;
-    let dayIndex = 0;
-    calendar.forEach((day, idx) => {
+    let nightStartIdx = nightShiftOrder.indexOf(nightShiftStartId);
+    if (nightStartIdx < 0) nightStartIdx = 0;
+    let dayStartIdx = dayShiftOrder.indexOf(dayShiftStartId);
+    if (dayStartIdx < 0) dayStartIdx = 0;
+    let nightIndex = nightStartIdx;
+    let dayIndex = dayStartIdx;
+    cal.forEach((day, idx) => {
       const dateStr = day.date;
-      newSchedule[dateStr] = { nightShift: null, dayShift: null, support: null, b: null, dayOff: null };
+      const prevDaySchedule = schedule[dateStr];
+      newSchedule[dateStr] = {
+        nightShift: null, dayShift: null, support: null, b: null, dayOff: null,
+        dayShiftManual: prevDaySchedule?.dayShiftManual ?? null,
+        supportManual: prevDaySchedule?.supportManual ?? null,
+        nightShiftManual: prevDaySchedule?.nightShiftManual ?? null,
+        bManual: prevDaySchedule?.bManual ?? null,
+        dayOffManual: prevDaySchedule?.dayOffManual ?? null
+      };
       if (nightShiftOrder.length > 0) {
         newSchedule[dateStr].nightShift = nightShiftOrder[nightIndex % nightShiftOrder.length];
         nightIndex++;
@@ -87,8 +193,8 @@ export default function ShiftScheduleScreen({ onBack }) {
           dayIndex++;
         }
       }
-      if (surgeryDays.includes(dateStr) && idx < calendar.length - 1) {
-        const nextDate = calendar[idx + 1].date;
+      if (surgeryDays.includes(dateStr) && idx < cal.length - 1) {
+        const nextDate = cal[idx + 1].date;
         if (newSchedule[nextDate]?.nightShift) {
           newSchedule[dateStr].b = newSchedule[nextDate].nightShift;
         }
@@ -105,35 +211,60 @@ export default function ShiftScheduleScreen({ onBack }) {
     }
     const savedLeaveData = localStorage.getItem('leaveData');
     const leaveData = savedLeaveData ? JSON.parse(savedLeaveData).leaveData || {} : {};
-    const newWeeklyOff = {};
+    const weekdays = calendar.filter(d => !d.isWeekend && !d.isHoliday);
+    const remaining = {};
     staffData.forEach(staff => {
       const staffId = staff.id;
       let weeklyOffDays = 0;
-      calendar.forEach((day) => {
+      calendar.forEach((day, idx) => {
         const dateStr = day.date;
-        const daySchedule = schedule[dateStr];
-        if (!daySchedule) return;
-        if (day.dayOfWeekNum === 5 && daySchedule.nightShift === staffId) weeklyOffDays += 1;
-        if (day.dayOfWeekNum === 6 && daySchedule.nightShift === staffId) weeklyOffDays += 2;
-        if (day.dayOfWeekNum === 6 && daySchedule.dayShift === staffId) weeklyOffDays += 1;
-        if (day.dayOfWeekNum === 0 && daySchedule.dayShift === staffId) weeklyOffDays += 1;
-        if (day.dayOfWeekNum === 0 && daySchedule.nightShift === staffId) weeklyOffDays += 1;
+        const daySchedule = schedule[dateStr] || {};
+        const nextDay = calendar[idx + 1];
+        const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift ?? schedule[nextDay.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
+        const onNight = daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId;
+        const onDay = daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId;
+        const onSupport = daySchedule.support === staffId || daySchedule.supportManual === staffId;
+        const onB = bPerson === staffId || daySchedule.bManual === staffId;
+        if (day.dayOfWeekNum === 5 && onNight) weeklyOffDays += 1;
+        if (day.dayOfWeekNum === 6 && onNight) weeklyOffDays += 2;
+        if (day.dayOfWeekNum === 6 && (onDay || onSupport)) weeklyOffDays += 1;
+        if (day.dayOfWeekNum === 0 && (onDay || onSupport)) weeklyOffDays += 1;
+        if (day.dayOfWeekNum === 0 && onNight) weeklyOffDays += 1;
+        if ((day.dayOfWeekNum === 6 || day.dayOfWeekNum === 0) && onB) weeklyOffDays += 1;
       });
-      let assignedDays = 0;
-      for (let i = 0; i < calendar.length && assignedDays < weeklyOffDays; i++) {
-        const day = calendar[i];
-        const dateStr = day.date;
-        if (!day.isWeekend && !day.isHoliday) {
-          const hasOtherLeave = leaveData[dateStr]?.some(leave => leave.staffId === staffId);
-          const daySchedule = schedule[dateStr];
-          const isAssigned = daySchedule?.nightShift === staffId || daySchedule?.dayShift === staffId || daySchedule?.support === staffId || daySchedule?.b === staffId || daySchedule?.dayOff === staffId;
-          if (!hasOtherLeave && !isAssigned) {
-            if (!newWeeklyOff[dateStr]) newWeeklyOff[dateStr] = [];
-            if (!newWeeklyOff[dateStr].includes(staffId)) {
-              newWeeklyOff[dateStr].push(staffId);
-              assignedDays++;
-            }
-          }
+      remaining[staff.id] = weeklyOffDays;
+    });
+
+    const newWeeklyOff = {};
+    const staffOrder = [...staffData];
+    weekdays.forEach((day, dayIndex) => {
+      const dateStr = day.date;
+      const daySchedule = schedule[dateStr] || {};
+      const calIdx = calendar.findIndex(d => d.date === dateStr);
+      const nextDay = calIdx >= 0 ? calendar[calIdx + 1] : null;
+      const prevDay = calIdx >= 0 ? calendar[calIdx - 1] : null;
+      const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay?.date]?.nightShift ?? schedule[nextDay?.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
+      const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShift ?? schedule[prevDay.date]?.nightShiftManual) : (daySchedule.dayOff ?? daySchedule.dayOffManual);
+      const totalRemaining = Object.values(remaining).reduce((a, b) => a + b, 0);
+      const daysLeft = weekdays.length - dayIndex;
+      const quota = Math.min(daysLeft > 0 ? Math.ceil(totalRemaining / daysLeft) : 0, totalRemaining);
+      let assigned = 0;
+      for (const staff of staffOrder) {
+        if (assigned >= quota) break;
+        const staffId = staff.id;
+        if (remaining[staffId] <= 0) continue;
+        const hasOtherLeave = leaveData[dateStr]?.some(leave => leave.staffId === staffId);
+        const isAssigned =
+          daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId ||
+          daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId ||
+          daySchedule.support === staffId || daySchedule.supportManual === staffId ||
+          (daySchedule.b ?? bPerson) === staffId || daySchedule.bManual === staffId ||
+          (daySchedule.dayOff ?? dayOffPerson) === staffId || daySchedule.dayOffManual === staffId;
+        if (!hasOtherLeave && !isAssigned) {
+          if (!newWeeklyOff[dateStr]) newWeeklyOff[dateStr] = [];
+          newWeeklyOff[dateStr].push(staffId);
+          remaining[staffId]--;
+          assigned++;
         }
       }
     });
@@ -143,6 +274,35 @@ export default function ShiftScheduleScreen({ onBack }) {
 
   const updateSchedule = (date, field, value) => {
     setSchedule(prev => ({ ...prev, [date]: { ...prev[date], [field]: value } }));
+  };
+
+  const moveWeeklyOff = (staffId, fromDate, toDate) => {
+    const day = calendar.find(d => d.date === toDate);
+    if (!day || day.isWeekend || day.isHoliday) return;
+    const savedLeaveData = localStorage.getItem('leaveData');
+    const leaveData = savedLeaveData ? JSON.parse(savedLeaveData).leaveData || {} : {};
+    const hasOtherLeave = leaveData[toDate]?.some(leave => leave.staffId === staffId);
+    const daySchedule = schedule[toDate] || {};
+    const calIdx = calendar.findIndex(d => d.date === toDate);
+    const nextDay = calIdx >= 0 ? calendar[calIdx + 1] : null;
+    const prevDay = calIdx >= 0 ? calendar[calIdx - 1] : null;
+    const bPerson = surgeryDays.includes(toDate) && nextDay ? (schedule[nextDay?.date]?.nightShift ?? schedule[nextDay?.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
+    const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShift ?? schedule[prevDay.date]?.nightShiftManual) : (daySchedule.dayOff ?? daySchedule.dayOffManual);
+    const isAssigned =
+      daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId ||
+      daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId ||
+      daySchedule.support === staffId || daySchedule.supportManual === staffId ||
+      (daySchedule.b ?? bPerson) === staffId || daySchedule.bManual === staffId ||
+      (daySchedule.dayOff ?? dayOffPerson) === staffId || daySchedule.dayOffManual === staffId;
+    if (hasOtherLeave || isAssigned) return;
+    setWeeklyOff(prev => {
+      const next = { ...prev };
+      if (next[fromDate]) next[fromDate] = next[fromDate].filter(id => id !== staffId);
+      if (next[fromDate]?.length === 0) delete next[fromDate];
+      if (!next[toDate]) next[toDate] = [];
+      if (!next[toDate].includes(staffId)) next[toDate].push(staffId);
+      return next;
+    });
   };
 
   const toggleWeeklyOff = (date, staffId) => {
@@ -159,23 +319,6 @@ export default function ShiftScheduleScreen({ onBack }) {
     });
   };
 
-  const getStaffName = (staffId) => staffData.find(s => s.id === staffId)?.name || staffId;
-
-  const getStaffAssignment = (staffId, date) => {
-    const daySchedule = schedule[date];
-    const savedLeaveData = localStorage.getItem('leaveData');
-    const leaveData = savedLeaveData ? JSON.parse(savedLeaveData).leaveData || {} : {};
-    const leave = leaveData[date]?.find(l => l.staffId === staffId);
-    if (leave) return leave.leaveType;
-    if (weeklyOff[date]?.includes(staffId)) return '週休';
-    if (daySchedule?.nightShift === staffId) return '16';
-    if (daySchedule?.dayShift === staffId) return '日勤';
-    if (daySchedule?.support === staffId) return 'サポート';
-    if (daySchedule?.b === staffId) return 'B';
-    if (daySchedule?.dayOff === staffId) return '非番';
-    return '-';
-  };
-
   const addToNightShiftOrder = (staffId) => {
     if (!nightShiftOrder.includes(staffId)) setNightShiftOrder([...nightShiftOrder, staffId]);
   };
@@ -189,10 +332,10 @@ export default function ShiftScheduleScreen({ onBack }) {
   };
 
   useEffect(() => {
-    const data = { startDate, endDate, calendar, surgeryDays, nightShiftOrder, dayShiftOrder, pairs, schedule, weeklyOff };
+    const data = { startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff };
     if (!startDate && !endDate && calendar.length === 0) return;
     localStorage.setItem('scheduleData', JSON.stringify(data));
-  }, [startDate, endDate, calendar, surgeryDays, nightShiftOrder, dayShiftOrder, pairs, schedule, weeklyOff]);
+  }, [startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff]);
 
   useEffect(() => {
     const saved = localStorage.getItem('scheduleData');
@@ -200,26 +343,32 @@ export default function ShiftScheduleScreen({ onBack }) {
       const data = JSON.parse(saved);
       setStartDate(data.startDate || '');
       setEndDate(data.endDate || '');
-      setCalendar(data.calendar || []);
+      const cal = data.calendar || [];
+      const migrated = cal.map(day => ({
+        ...day,
+        isHoliday: getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date)
+      }));
+      setCalendar(migrated);
       setSurgeryDays(data.surgeryDays || []);
+      setInternalMedicineDays(data.internalMedicineDays || []);
       setNightShiftOrder(data.nightShiftOrder || []);
       setDayShiftOrder(data.dayShiftOrder || []);
+      setNightShiftStartId(data.nightShiftStartId ?? null);
+      setDayShiftStartId(data.dayShiftStartId ?? null);
       setPairs(data.pairs || []);
       setSchedule(data.schedule || {});
       setWeeklyOff(data.weeklyOff || {});
     }
   }, []);
 
-  const colorMap = { '16': 'bg-blue-100 text-blue-800 border-blue-200', '日勤': 'bg-green-100 text-green-800 border-green-200', 'サポート': 'bg-yellow-100 text-yellow-800 border-yellow-200', 'B': 'bg-orange-100 text-orange-800 border-orange-200', '非番': 'bg-red-100 text-red-800 border-red-200', '週休': 'bg-violet-100 text-violet-800 border-violet-200', '年休': 'bg-emerald-100 text-emerald-800 border-emerald-200', 'リフ休': 'bg-purple-100 text-purple-800 border-purple-200', '特別休': 'bg-amber-100 text-amber-800 border-amber-200', '出張': 'bg-pink-100 text-pink-800 border-pink-200' };
-
   return (
     <div className="min-h-screen bg-violet-400 p-5 relative overflow-hidden">
       <div className="absolute top-20 left-20 w-96 h-96 bg-amber-200/30 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="max-w-7xl mx-auto relative">
+      <div className="max-w-[95vw] w-full mx-auto relative">
         <div className="flex justify-between items-center gap-4 mb-3">
           <h2 className="text-3xl font-bold text-stone-800">当番表作成</h2>
-          <button onClick={onBack} className="px-5 py-2.5 bg-slate-50 hover:bg-slate-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
+          <button onClick={onBack} className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-semibold transition-all shadow-sm">
             ← メインメニュー
           </button>
         </div>
@@ -236,134 +385,125 @@ export default function ShiftScheduleScreen({ onBack }) {
                 <label className="block text-base mb-1.5 font-semibold text-stone-600 uppercase tracking-wider">終了日</label>
                 <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
               </div>
-              <button onClick={generateCalendar} className="w-full px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-white rounded-xl text-lg font-semibold shadow-md transition-all hover:-translate-y-0.5">カレンダー生成</button>
             </div>
           </div>
           <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm hover:border-slate-400 transition-all">
             <h3 className="font-bold mb-3 text-stone-800 text-2xl">👥 順番設定</h3>
             <div className="space-y-2">
-              <button onClick={() => setShowNightShiftModal(true)} className="w-full px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-base font-semibold shadow-lg shadow-blue-500/20 transition-all hover:-translate-y-0.5">夜勤順番リスト ({nightShiftOrder.length}名)</button>
-              <button onClick={() => setShowDayShiftModal(true)} className="w-full px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-base font-semibold shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-0.5">日勤順番リスト ({dayShiftOrder.length}名)</button>
-              <button onClick={() => setShowPairModal(true)} className="w-full px-5 py-2.5 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-base font-semibold shadow-lg shadow-orange-500/20 transition-all hover:-translate-y-0.5">ペア設定 ({pairs.length}組)</button>
+              <div className="flex gap-2">
+                <button onClick={() => setShowNightShiftModal(true)} className="flex-1 px-3 py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-lg font-semibold shadow-lg shadow-blue-500/20 transition-all hover:-translate-y-0.5">夜勤順番リスト ({nightShiftOrder.length}名)</button>
+                <button onClick={() => setShowNightStartPicker(true)} className="flex-1 px-3 py-5 bg-blue-500 hover:bg-blue-400 text-white rounded-xl text-lg font-semibold border-2 border-blue-600 transition-all hover:-translate-y-0.5">開始者設定</button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setShowDayShiftModal(true)} className="flex-1 px-3 py-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-lg font-semibold shadow-lg shadow-emerald-500/20 transition-all hover:-translate-y-0.5">日勤順番リスト ({dayShiftOrder.length}名)</button>
+                <button onClick={() => setShowDayStartPicker(true)} className="flex-1 px-3 py-5 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl text-lg font-semibold border-2 border-emerald-600 transition-all hover:-translate-y-0.5">開始者設定</button>
+              </div>
+              <button onClick={() => setShowPairModal(true)} className="w-full px-5 py-5 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-lg font-semibold shadow-lg shadow-orange-500/20 transition-all hover:-translate-y-0.5">ペア設定 ({pairs.length}組)</button>
             </div>
           </div>
           <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm hover:border-slate-400 transition-all">
             <h3 className="font-bold mb-3 text-stone-800 text-lg">⚙️ 実行</h3>
-            <div className="space-y-2">
-              <button onClick={autoAssign} className="w-full px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-base font-semibold shadow-lg shadow-amber-500/20 transition-all hover:-translate-y-0.5">🎯 当番自動配置</button>
-              <button onClick={autoAssignWeeklyOff} className="w-full px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-base font-semibold shadow-lg shadow-indigo-500/20 transition-all hover:-translate-y-0.5">📅 週休自動割り当て</button>
-              <button onClick={() => setShowMatrix(!showMatrix)} className="w-full px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-base font-semibold shadow-lg shadow-cyan-500/20 transition-all hover:-translate-y-0.5">{showMatrix ? '📋 基本表示' : '📊 マトリックス表示'}</button>
+            <div className="flex gap-3">
+              <button onClick={autoAssign} className="flex-1 px-4 py-16 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-lg font-semibold shadow-lg shadow-amber-500/20 transition-all hover:-translate-y-0.5">🎯 当番自動配置</button>
+              <button onClick={autoAssignWeeklyOff} className="flex-1 px-4 py-16 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-lg font-semibold shadow-lg shadow-indigo-500/20 transition-all hover:-translate-y-0.5">📅 週休自動割り当て</button>
             </div>
           </div>
         </div>
 
-        {/* 当番表プレビュー（自動配置・週休割り当て後の一覧） */}
-        {calendar.length > 0 && Object.keys(schedule).length > 0 && (
-          <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm mb-3">
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl">📋 当番表プレビュー</h3>
-            <p className="text-sm text-stone-600 mb-3">縦：日付 / 横：日勤・サポート・16 の担当者</p>
-            <div className="overflow-x-auto">
-              <table className="border-collapse text-base min-w-full">
-                <thead>
-                  <tr className="bg-slate-100">
-                    <th className="border border-slate-400 p-2 sticky left-0 bg-slate-100 z-10 min-w-[120px] text-left text-stone-800 font-semibold uppercase tracking-wider">日付</th>
-                    <th className="border border-slate-400 p-3 min-w-[140px] text-left text-green-700 font-semibold uppercase tracking-wider bg-green-50">日勤</th>
-                    <th className="border border-slate-400 p-3 min-w-[140px] text-left text-yellow-700 font-semibold uppercase tracking-wider bg-yellow-50">サポート</th>
-                    <th className="border border-slate-400 p-3 min-w-[140px] text-left text-blue-700 font-semibold uppercase tracking-wider bg-blue-50">16</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {calendar.map(day => {
-                    const daySchedule = schedule[day.date] || {};
-                    return (
-                      <tr key={day.date} className={`border-b border-slate-400 hover:bg-slate-50 transition-all ${day.isWeekend ? 'bg-slate-50' : ''}`}>
-                        <td className="border border-slate-400 p-2 sticky left-0 bg-slate-50 z-10 text-stone-800 font-medium">
-                          {day.date} <span className="text-stone-600">({day.dayOfWeek})</span>
-                        </td>
-                        <td className="border border-slate-400 p-3 bg-green-50/50 text-green-800">{getStaffName(daySchedule.dayShift) || '-'}</td>
-                        <td className="border border-slate-400 p-3 bg-yellow-50/50 text-yellow-800">{getStaffName(daySchedule.support) || '-'}</td>
-                        <td className="border border-slate-400 p-3 bg-blue-50/50 text-blue-800">{getStaffName(daySchedule.nightShift) || '-'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {showMatrix && calendar.length > 0 && (
-          <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm mb-3">
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl">📊 職員×日付マトリックス（16、日勤、サポート、B、非番、週休、休暇）</h3>
-            <div className="overflow-x-auto">
-              <table className="border-collapse text-xs min-w-full">
-                <thead>
-                  <tr className="bg-slate-100">
-                    <th className="border border-slate-400 p-2 sticky left-0 bg-slate-100 z-10 min-w-[100px]">
-                      <div className="font-bold text-stone-800 uppercase tracking-wider">職員</div>
-                    </th>
-                    {calendar.map(day => (
-                      <th key={day.date} className={`border border-slate-400 p-2 min-w-[80px] ${day.isWeekend ? 'bg-slate-100' : ''}`}>
-                        <div className="text-stone-600">{day.date.split('-')[2]}</div>
-                        <div className="text-sm text-stone-600">{day.dayOfWeek}</div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {staffData.map(staff => (
-                    <tr key={staff.id} className="hover:bg-slate-50 transition-all">
-                      <td className="border border-slate-400 p-3 font-bold sticky left-0 bg-slate-50 z-10 text-stone-800">{staff.name}</td>
-                      {calendar.map(day => {
-                        const assignment = getStaffAssignment(staff.id, day.date);
-                        const cellClass = colorMap[assignment] || 'text-stone-600 border-slate-400 bg-slate-50';
-                        return (
-                          <td key={day.date} className={`border border-slate-400 p-1 text-center cursor-pointer hover:bg-slate-100 transition-all ${day.isWeekend ? 'bg-slate-50' : ''}`} onClick={() => { if (assignment === '週休') toggleWeeklyOff(day.date, staff.id); }}>
-                            <div className={`text-xs py-1 px-2 rounded border font-semibold ${cellClass}`}>{assignment}</div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="mt-4 text-sm text-stone-600">※週休のセルをクリックで手動追加/削除が可能です</div>
-          </div>
-        )}
-
-        {!showMatrix && calendar.length > 0 && (
+        {calendar.length > 0 && (
           <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm">
             <h3 className="font-bold mb-3 text-stone-800 text-2xl">📆 当番表カレンダー</h3>
             <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-sm">
+              <table className="w-full border-collapse table-fixed text-lg">
+                <colgroup>
+                  <col style={{ width: '3.5rem' }} />
+                  <col style={{ width: '1.25rem' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '1.75rem' }} />
+                  <col style={{ width: '1.75rem' }} />
+                </colgroup>
                 <thead>
                   <tr className="border-b border-slate-400 bg-slate-50">
-                    <th className="p-3 text-left text-stone-600 font-semibold uppercase tracking-wider">日付</th>
-                    <th className="p-3 text-center text-stone-600 font-semibold uppercase tracking-wider">曜日</th>
-                    <th className="p-3 text-left text-blue-700 font-semibold uppercase tracking-wider bg-blue-50">夜勤(16)</th>
-                    <th className="p-3 text-left text-green-700 font-semibold uppercase tracking-wider bg-green-50">日勤</th>
-                    <th className="p-3 text-left text-yellow-700 font-semibold uppercase tracking-wider bg-yellow-50">サポート</th>
-                    <th className="p-3 text-left text-orange-700 font-semibold uppercase tracking-wider bg-orange-50">B</th>
-                    <th className="p-3 text-left text-red-700 font-semibold uppercase tracking-wider bg-red-50">非番</th>
-                    <th className="p-3 text-center text-stone-600 font-semibold uppercase tracking-wider">外科輪番</th>
+                    <th className="pl-0.5 pr-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">日付</th>
+                    <th className="pl-0 pr-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">曜日</th>
+                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">日勤</th>
+                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">サポート</th>
+                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">夜勤</th>
+                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">B</th>
+                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">非番</th>
+                    <th className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white border-r border-slate-400">外科</th>
+                    <th className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white">内科</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {calendar.map(day => {
+                  {calendar.map((day, idx) => {
                     const isSurgery = surgeryDays.includes(day.date);
+                    const isInternalMedicine = internalMedicineDays.includes(day.date);
                     const daySchedule = schedule[day.date] || {};
+                    const nextDay = calendar[idx + 1];
+                    const prevDay = calendar[idx - 1];
+                    const bPerson = isSurgery && nextDay ? (schedule[nextDay.date]?.nightShift) : (daySchedule.b);
+                    const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShift) : null;
+                    const name = (id) => (id ? (staffData.find(s => s.id === id)?.name || id) : '');
+                    const isHoliday = day.isHoliday ?? getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date);
+                    const isWeekendOrHoliday = day.isWeekend || isHoliday;
+                    const rowBg = isSurgery ? 'bg-yellow-200' : (isInternalMedicine ? 'bg-pink-200' : (isWeekendOrHoliday ? 'bg-sky-50' : ''));
+                    const cellBg = isWeekendOrHoliday && !isSurgery && !isInternalMedicine ? 'bg-sky-100/50' : '';
+                    const rowBorder = isSurgery ? 'border-l-4 border-l-amber-500' : (isInternalMedicine ? 'border-l-4 border-l-pink-500' : (isWeekendOrHoliday ? 'border-l-4 border-l-sky-400' : ''));
+                    const borderR = 'border-r border-slate-300';
+                    const manualBox = (field, value, hasAuto) => {
+                      if (!hasAuto) return <td className={`px-0.5 py-2 text-center border-r-2 border-slate-500 ${cellBg}`} />;
+                      return (
+                        <td className={`px-0.5 py-2 text-center border-r-2 border-slate-500 ${cellBg}`}>
+                          <button
+                            type="button"
+                            onClick={() => setManualPicker({ date: day.date, field })}
+                            className={`w-full min-h-[1.75rem] rounded text-sm font-medium bg-white/70 hover:bg-white/85 border border-slate-300/80 transition-all ${value ? 'text-red-600' : 'text-stone-500'}`}
+                          >
+                            {name(value) || ''}
+                          </button>
+                        </td>
+                      );
+                    };
+                    const autoEditCell = (field, displayValue) => (
+                      <td className={`px-0.5 py-2 text-center text-stone-800 font-bold text-sm ${borderR} ${cellBg}`}>
+                        <button
+                          type="button"
+                          onClick={() => { if (window.confirm('変えても良いですか？')) setEditPicker({ date: day.date, field }); }}
+                          className="w-full min-h-[1.75rem] rounded text-stone-800 hover:bg-slate-200/60 transition-all cursor-pointer"
+                        >
+                          {name(displayValue) || ''}
+                        </button>
+                      </td>
+                    );
                     return (
-                      <tr key={day.date} className={`border-b border-slate-400 hover:bg-slate-50 transition-all ${day.isWeekend ? 'bg-slate-50' : ''}`}>
-                        <td className="p-3 text-stone-800">{day.date}</td>
-                        <td className="p-3 text-center text-stone-800 font-bold">{day.dayOfWeek}</td>
-                        <td className="p-3 bg-blue-50 text-blue-800">{daySchedule.nightShift || '-'}</td>
-                        <td className="p-3 bg-green-50 text-green-800">{daySchedule.dayShift || '-'}</td>
-                        <td className="p-3 bg-yellow-50 text-yellow-800">{daySchedule.support || '-'}</td>
-                        <td className="p-3 bg-orange-50 text-orange-800">{daySchedule.b || '-'}</td>
-                        <td className="p-3 bg-red-50 text-red-800">{daySchedule.dayOff || '-'}</td>
-                        <td className="p-3 text-center">
-                          <button onClick={() => toggleSurgeryDay(day.date)} className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${isSurgery ? 'bg-red-500 hover:bg-red-400 text-white shadow-sm' : 'bg-stone-200 hover:bg-stone-300 text-stone-600'}`}>{isSurgery ? '✓' : '−'}</button>
+                      <tr key={day.date} className={`border-b border-slate-400 transition-all ${rowBg} ${rowBorder}`}>
+                        <td className={`pl-0.5 pr-0.5 py-2 text-center text-stone-800 text-base border-r border-slate-400 ${cellBg}`}>{day.date}</td>
+                        <td className={`pl-0 pr-0.5 py-2 text-center font-bold text-base border-r border-slate-400 ${cellBg} ${isHoliday ? 'text-red-600' : isWeekendOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</td>
+                        {autoEditCell('dayShift', daySchedule.dayShift)}
+                        {manualBox('dayShiftManual', daySchedule.dayShiftManual, !!daySchedule.dayShift)}
+                        {autoEditCell('support', daySchedule.support)}
+                        {manualBox('supportManual', daySchedule.supportManual, !!daySchedule.support)}
+                        {autoEditCell('nightShift', daySchedule.nightShift)}
+                        {manualBox('nightShiftManual', daySchedule.nightShiftManual, !!daySchedule.nightShift)}
+                        {autoEditCell('b', bPerson ?? daySchedule.b)}
+                        {manualBox('bManual', daySchedule.bManual, !!bPerson)}
+                        {autoEditCell('dayOff', dayOffPerson ?? daySchedule.dayOff)}
+                        {manualBox('dayOffManual', daySchedule.dayOffManual, !!dayOffPerson)}
+                        <td className={`px-0.5 py-2 text-center border-r border-slate-400 bg-white`}>
+                          <button onClick={() => toggleSurgeryDay(day.date)} className={`min-w-[1.5rem] min-h-[1.5rem] rounded text-sm font-semibold transition-all ${isSurgery ? 'bg-red-500 hover:bg-red-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isSurgery ? '✓' : '−'}</button>
+                        </td>
+                        <td className="px-0.5 py-2 text-center bg-white">
+                          <button onClick={() => toggleInternalMedicineDay(day.date)} className={`min-w-[1.5rem] min-h-[1.5rem] rounded text-sm font-semibold transition-all ${isInternalMedicine ? 'bg-pink-500 hover:bg-pink-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isInternalMedicine ? '✓' : '−'}</button>
                         </td>
                       </tr>
                     );
@@ -371,35 +511,339 @@ export default function ShiftScheduleScreen({ onBack }) {
                 </tbody>
               </table>
             </div>
-            <div className="mt-3 text-sm text-stone-600">※外科輪番日はボタンをクリックして指定してください</div>
+            <div className="mt-3 text-base text-stone-600">※日勤・サポート・夜勤・B・非番は1列目＝自動、2列目＝手動変更（自動で人が入っている隣のボックスをクリックで職員選択）。土日祝は曜日を赤表示し、祝日にも日勤・サポートを自動割当します。外科輪番・内科輪番はボタンで指定。Bは外科輪番の日に翌日夜勤、非番は前日夜勤の担当者を自動表示します。</div>
+
+            <h3 className="font-bold mb-3 text-stone-800 text-2xl mt-8">📋 週休割り当て結果</h3>
+            <p className="text-sm text-stone-600 mb-2">縦＝職員（夜勤順番リスト順）、横＝日付。A＝日勤、16＝夜勤（暗ピンク）、B＝青、非番＝オレンジ、黄色＝週休または土日祝で勤務なし。</p>
+            <div className="overflow-x-auto border border-slate-400 rounded-xl">
+              <table className="w-full border-collapse text-sm table-fixed" style={{ minWidth: `${calendar.length * 2.5 + 9}rem` }}>
+                <colgroup>
+                  <col style={{ width: '9rem', minWidth: '9rem' }} />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-slate-400 bg-slate-100">
+                    <th className="sticky left-0 z-10 w-[9rem] min-w-[9rem] px-2 py-2 text-left text-stone-600 font-semibold bg-slate-100 border-r border-slate-400">職員</th>
+                    {calendar.map((day) => {
+                      const isHoliday = getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date);
+                      const isWeekendOrHoliday = day.isWeekend || isHoliday;
+                      return (
+                        <th key={day.date} className="px-0.5 py-1 text-center text-stone-600 font-medium border-r border-slate-300 min-w-[2.5rem]">
+                          <span className="block text-xs text-stone-500">{day.date.slice(5)}</span>
+                          <span className={`font-bold ${isWeekendOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</span>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {nightShiftOrder.map((staffId) => {
+                    const staff = staffData.find(s => s.id === staffId);
+                    if (!staff) return null;
+                    let weeklyOffDays = 0;
+                    calendar.forEach((day, idx) => {
+                      const dateStr = day.date;
+                      const daySchedule = schedule[dateStr] || {};
+                      const nextDay = calendar[idx + 1];
+                      const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift ?? schedule[nextDay.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
+                      const onNight = daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId;
+                      const onDay = daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId;
+                      const onSupport = daySchedule.support === staffId || daySchedule.supportManual === staffId;
+                      const onB = bPerson === staffId || daySchedule.bManual === staffId;
+                      if (day.dayOfWeekNum === 5 && onNight) weeklyOffDays += 1;
+                      if (day.dayOfWeekNum === 6 && onNight) weeklyOffDays += 2;
+                      if (day.dayOfWeekNum === 6 && (onDay || onSupport)) weeklyOffDays += 1;
+                      if (day.dayOfWeekNum === 0 && (onDay || onSupport)) weeklyOffDays += 1;
+                      if (day.dayOfWeekNum === 0 && onNight) weeklyOffDays += 1;
+                      if ((day.dayOfWeekNum === 6 || day.dayOfWeekNum === 0) && onB) weeklyOffDays += 1;
+                    });
+                    return (
+                      <tr key={staffId} className="border-b border-slate-300">
+                        <td className="sticky left-0 z-10 w-[9rem] min-w-[9rem] px-2 py-1 text-stone-800 font-medium bg-slate-50 border-r border-slate-400 whitespace-nowrap overflow-visible">{staff.name} <span className="text-stone-500 font-normal">({weeklyOffDays})</span></td>
+                        {calendar.map((day, idx) => {
+                          const dateStr = day.date;
+                          const daySchedule = schedule[dateStr] || {};
+                          const nextDay = calendar[idx + 1];
+                          const prevDay = calendar[idx - 1];
+                          const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift) : (daySchedule.b);
+                          const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShift) : null;
+                          const isHoliday = getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date);
+                          const isWeekendOrHoliday = day.isWeekend || isHoliday;
+                          let label = '';
+                          let cellClass = 'px-0.5 py-1 text-center border-r border-slate-200';
+                          if (daySchedule.dayShift === staffId) {
+                            label = 'A';
+                            cellClass += ' bg-emerald-100 text-stone-800';
+                          } else if (daySchedule.support === staffId) {
+                            label = 'S';
+                            cellClass += ' bg-emerald-50 text-stone-700';
+                          } else if (daySchedule.nightShift === staffId) {
+                            label = '16';
+                            cellClass += ' bg-rose-800 text-white';
+                          } else if (bPerson === staffId) {
+                            label = 'B';
+                            cellClass += ' bg-blue-600 text-white';
+                          } else if (dayOffPerson === staffId) {
+                            label = '非番';
+                            cellClass += ' bg-orange-400 text-white';
+                          } else if (weeklyOff[dateStr]?.includes(staffId)) {
+                            label = '週休';
+                            cellClass += ' bg-yellow-300 text-stone-800';
+                          } else if (isWeekendOrHoliday) {
+                            label = '';
+                            cellClass += ' bg-yellow-300 text-stone-800';
+                          }
+                          const isWeeklyOffCell = weeklyOff[dateStr]?.includes(staffId);
+                          const handleDrop = (e) => {
+                            e.preventDefault();
+                            const raw = e.dataTransfer.getData('text/plain');
+                            if (!raw) return;
+                            try {
+                              const data = JSON.parse(raw);
+                              if (data.type === 'weeklyOff' && data.staffId === staffId && data.dateStr !== dateStr) moveWeeklyOff(staffId, data.dateStr, dateStr);
+                            } catch (_) {}
+                          };
+                          return (
+                            <td
+                              key={dateStr}
+                              className={cellClass + (isWeeklyOffCell ? ' cursor-grab active:cursor-grabbing' : '')}
+                              draggable={isWeeklyOffCell}
+                              onDragStart={isWeeklyOffCell ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'weeklyOff', staffId, dateStr })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                              onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }}
+                              onDrop={handleDrop}
+                            >
+                              {label}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4 p-4 bg-slate-100/80 rounded-xl border border-slate-300 text-stone-700 text-sm space-y-2">
+              <h4 className="font-bold text-stone-800 text-base">週休を割り当てるルール</h4>
+              <p className="font-semibold text-stone-700">【付与する週休の日数】</p>
+              <ul className="list-disc list-inside ml-2 space-y-0.5">
+                <li>金曜の夜勤 … +1日</li>
+                <li>土曜の夜勤 … +2日</li>
+                <li>土曜の日勤・サポート … +1日</li>
+                <li>日曜の日勤・サポート … +1日</li>
+                <li>日曜の夜勤 … +1日</li>
+                <li>土日のB … +1日</li>
+              </ul>
+              <p className="font-semibold text-stone-700 mt-2">【割り当て先】</p>
+              <ul className="list-disc list-inside ml-2 space-y-0.5">
+                <li>平日のみ（土日祝は割り当て先にしない）</li>
+                <li>期間全体でバランスをとり、1日あたりの週休人数が偏らないように割り当てる（配置表で必要人数を満たしやすくするため。不足する場合は週休の割り当てを変更して調整）</li>
+              </ul>
+              <p className="font-semibold text-stone-700 mt-2">【週休を割り当てない日】</p>
+              <ul className="list-disc list-inside ml-2 space-y-0.5">
+                <li>その日に休暇入力がある日</li>
+                <li>その日に当番表で勤務が入っている日（日勤・サポート・夜勤・B・非番のいずれか。手動変更も含む）</li>
+              </ul>
+              <p className="text-stone-600 mt-2">※土日祝で勤務が当たっていない日は黄色で表示しますが、付与する週休の日数には含めません。</p>
+            </div>
+          </div>
+        )}
+
+        {manualPicker && (() => {
+          const isDayList = manualPicker.field === 'dayShiftManual' || manualPicker.field === 'supportManual';
+          const allowedIds = isDayList ? dayShiftOrder : nightShiftOrder;
+          const pickerStaff = staffData.filter(s => allowedIds.includes(s.id));
+          return (
+            <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-5 z-50" onClick={() => setManualPicker(null)}>
+              <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="font-bold text-stone-800 text-xl mb-3">職員を選択（{isDayList ? '日勤' : '夜勤'}リスト）</h3>
+                <div className="max-h-64 overflow-y-auto space-y-1 mb-3">
+                  {pickerStaff.map(s => (
+                    <button key={s.id} type="button" onClick={() => { updateSchedule(manualPicker.date, manualPicker.field, s.id); setManualPicker(null); }} className="w-full text-left px-3 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-stone-800 font-medium text-lg transition-all">
+                      {s.name}
+                    </button>
+                  ))}
+                  {pickerStaff.length === 0 && <p className="text-stone-500 text-sm py-2">該当リストに職員がいません</p>}
+                </div>
+                <button type="button" onClick={() => { updateSchedule(manualPicker.date, manualPicker.field, null); setManualPicker(null); }} className="w-full px-3 py-2 rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-lg">
+                  クリア
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {editPicker && (() => {
+          const isDayList = editPicker.field === 'dayShift' || editPicker.field === 'support';
+          const allowedIds = isDayList ? dayShiftOrder : nightShiftOrder;
+          const pickerStaff = staffData.filter(s => allowedIds.includes(s.id));
+          return (
+            <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-5 z-50" onClick={() => setEditPicker(null)}>
+              <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="font-bold text-stone-800 text-xl mb-3">職員を選択（{isDayList ? '日勤' : '夜勤'}リスト）</h3>
+                <div className="max-h-64 overflow-y-auto space-y-1 mb-3">
+                  {pickerStaff.map(s => (
+                    <button key={s.id} type="button" onClick={() => { updateSchedule(editPicker.date, editPicker.field, s.id); setEditPicker(null); }} className="w-full text-left px-3 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-stone-800 font-medium text-lg transition-all">
+                      {s.name}
+                    </button>
+                  ))}
+                  {pickerStaff.length === 0 && <p className="text-stone-500 text-sm py-2">該当リストに職員がいません</p>}
+                </div>
+                <button type="button" onClick={() => { updateSchedule(editPicker.date, editPicker.field, null); setEditPicker(null); }} className="w-full px-3 py-2 rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-lg">
+                  クリア
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {showNightStartPicker && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-5 z-50" onClick={() => setShowNightStartPicker(false)}>
+            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="font-bold text-stone-800 text-xl mb-3">夜勤の開始者を選ぶ</h3>
+              <div className="max-h-64 overflow-y-auto space-y-1 mb-3">
+                {nightShiftOrder.map((id, idx) => {
+                  const staff = staffData.find(s => s.id === id);
+                  const isStart = nightShiftStartId === id;
+                  return (
+                    <button key={id} type="button" onClick={() => { setNightShiftStartId(id); setShowNightStartPicker(false); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-blue-500 border-blue-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-blue-50'}`}>
+                      {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
+                    </button>
+                  );
+                })}
+                {nightShiftOrder.length === 0 && <p className="text-stone-500 py-2">夜勤順番リストを設定してください</p>}
+              </div>
+              <button type="button" onClick={() => setShowNightStartPicker(false)} className="w-full px-3 py-2 rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-lg">閉じる</button>
+            </div>
+          </div>
+        )}
+
+        {showDayStartPicker && (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-5 z-50" onClick={() => setShowDayStartPicker(false)}>
+            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <h3 className="font-bold text-stone-800 text-xl mb-3">日勤の開始者を選ぶ</h3>
+              <div className="max-h-64 overflow-y-auto space-y-1 mb-3">
+                {dayShiftOrder.map((id, idx) => {
+                  const staff = staffData.find(s => s.id === id);
+                  const isStart = dayShiftStartId === id;
+                  return (
+                    <button key={id} type="button" onClick={() => { setDayShiftStartId(id); setShowDayStartPicker(false); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-emerald-50'}`}>
+                      {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
+                    </button>
+                  );
+                })}
+                {dayShiftOrder.length === 0 && <p className="text-stone-500 py-2">日勤順番リストを設定してください</p>}
+              </div>
+              <button type="button" onClick={() => setShowDayStartPicker(false)} className="w-full px-3 py-2 rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-lg">閉じる</button>
+            </div>
           </div>
         )}
 
         {showNightShiftModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5 z-50">
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 max-w-md w-full max-h-96 overflow-y-auto shadow-xl">
-              <div className="flex justify-between items-center mb-3">
+            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 w-full max-w-4xl max-h-[85vh] flex flex-col shadow-xl">
+              <div className="flex justify-between items-center mb-3 shrink-0">
                 <h3 className="font-bold text-stone-800 text-2xl">夜勤順番リスト設定</h3>
-                <button onClick={() => setShowNightShiftModal(false)} className="text-stone-400 hover:text-stone-600 transition-colors text-2xl">✕</button>
+                <button onClick={() => setShowNightShiftModal(false)} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
               </div>
-              <div className="mb-3">
-                <label className="block text-base mb-1.5 text-stone-600 font-semibold uppercase tracking-wider">職員を選択して追加</label>
-                <select onChange={(e) => { addToNightShiftOrder(e.target.value); e.target.value = ''; }} className="w-full p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition-all">
-                  <option value="">-- 職員を選択 --</option>
-                  {staffData.map(s => (<option key={s.id} value={s.id}>{s.name} ({s.id})</option>))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <h4 className="font-bold text-sm text-stone-600 uppercase tracking-wider">現在の順番：</h4>
-                {nightShiftOrder.map((id, idx) => {
-                  const staff = staffData.find(s => s.id === id);
-                  return (
-                    <div key={idx} className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-400">
-                      <span className="text-stone-800">{idx + 1}. {staff?.name || id}</span>
-                      <button onClick={() => setNightShiftOrder(nightShiftOrder.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold transition-colors">削除</button>
-                    </div>
-                  );
-                })}
+              <p className="text-sm text-stone-600 mb-3 shrink-0">左の職員を右へドラッグして順番を構成。右側でドラッグして並び替え可能。右端で「この月の開始」を選ぶと、その人から順に割り当てます。</p>
+              <div className="flex gap-4 flex-1 min-h-0">
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-slate-300 rounded-xl bg-white overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-slate-100 border-b border-slate-300 shrink-0">職員一覧</h4>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                    {staffData.filter(s => !nightShiftOrder.includes(s.id)).map(staff => (
+                      <div
+                        key={staff.id}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }}
+                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-blue-400 hover:bg-blue-50 transition-all"
+                      >
+                        {staff.name} ({staff.id})
+                      </div>
+                    ))}
+                    {staffData.filter(s => !nightShiftOrder.includes(s.id)).length === 0 && (
+                      <p className="text-stone-500 text-sm py-4 text-center">全員が右に追加されています</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-blue-300 rounded-xl bg-blue-50/30 overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-blue-100 border-b border-blue-300 shrink-0">順番（上から）</h4>
+                  <div
+                    className="flex-1 overflow-y-auto p-2 space-y-1 min-h-[120px]"
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
+                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('ring-2', 'ring-blue-400');
+                      const raw = e.dataTransfer.getData('text/plain');
+                      if (!raw) return;
+                      try {
+                        const { source, staffId } = JSON.parse(raw);
+                        if (source === 'left' && staffId && !nightShiftOrder.includes(staffId)) setNightShiftOrder([...nightShiftOrder, staffId]);
+                      } catch (_) {}
+                    }}
+                  >
+                    {nightShiftOrder.map((id, idx) => {
+                      const staff = staffData.find(s => s.id === id);
+                      return (
+                        <div
+                          key={`${id}-${idx}`}
+                          draggable
+                          onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'right', staffId: id, fromIndex: idx })); e.dataTransfer.effectAllowed = 'move'; }}
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('ring-2', 'ring-inset', 'ring-blue-500'); }}
+                          onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-blue-500'); }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-blue-500');
+                            const raw = e.dataTransfer.getData('text/plain');
+                            if (!raw) return;
+try {
+                                const data = JSON.parse(raw);
+                                if (data.source === 'right' && data.fromIndex !== undefined) {
+                                  if (data.fromIndex === idx) return;
+                                  const newOrder = nightShiftOrder.filter((_, i) => i !== data.fromIndex);
+                                  const insertIdx = data.fromIndex < idx ? idx - 1 : idx;
+                                  newOrder.splice(insertIdx, 0, data.staffId);
+                                  setNightShiftOrder(newOrder);
+                                } else if (data.source === 'left' && data.staffId && !nightShiftOrder.includes(data.staffId)) {
+                                const newOrder = [...nightShiftOrder];
+                                newOrder.splice(idx, 0, data.staffId);
+                                setNightShiftOrder(newOrder);
+                              }
+                            } catch (_) {}
+                          }}
+                          className="flex justify-between items-center px-3 py-2 rounded-lg border border-blue-300 bg-white cursor-grab active:cursor-grabbing hover:border-blue-500 transition-all group"
+                        >
+                          <span className="text-stone-800 font-medium">{idx + 1}. {staff?.name || id}</span>
+                          <button type="button" onClick={() => setNightShiftOrder(nightShiftOrder.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity">削除</button>
+                        </div>
+                      );
+                    })}
+                    {nightShiftOrder.length === 0 && (
+                      <p className="text-stone-500 text-sm py-4 text-center border-2 border-dashed border-slate-300 rounded-lg">ここにドロップで追加</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-blue-200 rounded-xl bg-blue-50/50 overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-blue-100 border-b border-blue-200 shrink-0">開始選択</h4>
+                  <p className="text-xs text-stone-600 px-2 py-1 shrink-0">この月の開始する人を選ぶ</p>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                    {nightShiftOrder.map((id, idx) => {
+                      const staff = staffData.find(s => s.id === id);
+                      const isStart = nightShiftStartId === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setNightShiftStartId(id)}
+                          className={`w-full text-left px-3 py-4 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-blue-500 border-blue-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:border-blue-400 hover:bg-blue-50'}`}
+                        >
+                          {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
+                        </button>
+                      );
+                    })}
+                    {nightShiftOrder.length === 0 && <p className="text-stone-500 text-sm py-4 text-center">順番を設定してください</p>}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -407,29 +851,111 @@ export default function ShiftScheduleScreen({ onBack }) {
 
         {showDayShiftModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5 z-50">
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 max-w-md w-full max-h-96 overflow-y-auto shadow-xl">
-              <div className="flex justify-between items-center mb-3">
+            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 w-full max-w-4xl max-h-[85vh] flex flex-col shadow-xl">
+              <div className="flex justify-between items-center mb-3 shrink-0">
                 <h3 className="font-bold text-stone-800 text-2xl">日勤順番リスト設定</h3>
-                <button onClick={() => setShowDayShiftModal(false)} className="text-stone-400 hover:text-stone-600 transition-colors text-2xl">✕</button>
+                <button onClick={() => setShowDayShiftModal(false)} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
               </div>
-              <div className="mb-3">
-                <label className="block text-base mb-1.5 text-stone-600 font-semibold uppercase tracking-wider">職員を選択して追加</label>
-                <select onChange={(e) => { addToDayShiftOrder(e.target.value); e.target.value = ''; }} className="w-full p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 focus:border-green-400 focus:ring-2 focus:ring-green-100 outline-none transition-all">
-                  <option value="">-- 職員を選択 --</option>
-                  {staffData.map(s => (<option key={s.id} value={s.id}>{s.name} ({s.id})</option>))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <h4 className="font-bold text-sm text-stone-600 uppercase tracking-wider">現在の順番：</h4>
-                {dayShiftOrder.map((id, idx) => {
-                  const staff = staffData.find(s => s.id === id);
-                  return (
-                    <div key={idx} className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-400">
-                      <span className="text-stone-800">{idx + 1}. {staff?.name || id}</span>
-                      <button onClick={() => setDayShiftOrder(dayShiftOrder.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold transition-colors">削除</button>
-                    </div>
-                  );
-                })}
+              <p className="text-sm text-stone-600 mb-3 shrink-0">左の職員を右へドラッグして順番を構成。右側でドラッグして並び替え可能。右端で「この月の開始」を選ぶと、その人から順に割り当てます。</p>
+              <div className="flex gap-4 flex-1 min-h-0">
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-slate-300 rounded-xl bg-white overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-slate-100 border-b border-slate-300 shrink-0">職員一覧</h4>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                    {staffData.filter(s => !dayShiftOrder.includes(s.id)).map(staff => (
+                      <div
+                        key={staff.id}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }}
+                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-emerald-400 hover:bg-emerald-50 transition-all"
+                      >
+                        {staff.name} ({staff.id})
+                      </div>
+                    ))}
+                    {staffData.filter(s => !dayShiftOrder.includes(s.id)).length === 0 && (
+                      <p className="text-stone-500 text-sm py-4 text-center">全員が右に追加されています</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-emerald-300 rounded-xl bg-emerald-50/30 overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-emerald-100 border-b border-emerald-300 shrink-0">順番（上から）</h4>
+                  <div
+                    className="flex-1 overflow-y-auto p-2 space-y-1 min-h-[120px]"
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-emerald-400'); }}
+                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('ring-2', 'ring-emerald-400'); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.currentTarget.classList.remove('ring-2', 'ring-emerald-400');
+                      const raw = e.dataTransfer.getData('text/plain');
+                      if (!raw) return;
+                      try {
+                        const { source, staffId } = JSON.parse(raw);
+                        if (source === 'left' && staffId && !dayShiftOrder.includes(staffId)) setDayShiftOrder([...dayShiftOrder, staffId]);
+                      } catch (_) {}
+                    }}
+                  >
+                    {dayShiftOrder.map((id, idx) => {
+                      const staff = staffData.find(s => s.id === id);
+                      return (
+                        <div
+                          key={`${id}-${idx}`}
+                          draggable
+                          onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'right', staffId: id, fromIndex: idx })); e.dataTransfer.effectAllowed = 'move'; }}
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('ring-2', 'ring-inset', 'ring-emerald-500'); }}
+                          onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-emerald-500'); }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-emerald-500');
+                            const raw = e.dataTransfer.getData('text/plain');
+                            if (!raw) return;
+                            try {
+                              const data = JSON.parse(raw);
+                              if (data.source === 'right' && data.fromIndex !== undefined) {
+                                if (data.fromIndex === idx) return;
+                                const newOrder = dayShiftOrder.filter((_, i) => i !== data.fromIndex);
+                                const insertIdx = data.fromIndex < idx ? idx - 1 : idx;
+                                newOrder.splice(insertIdx, 0, data.staffId);
+                                setDayShiftOrder(newOrder);
+                              } else if (data.source === 'left' && data.staffId && !dayShiftOrder.includes(data.staffId)) {
+                                const newOrder = [...dayShiftOrder];
+                                newOrder.splice(idx, 0, data.staffId);
+                                setDayShiftOrder(newOrder);
+                              }
+                            } catch (_) {}
+                          }}
+                          className="flex justify-between items-center px-3 py-2 rounded-lg border border-emerald-300 bg-white cursor-grab active:cursor-grabbing hover:border-emerald-500 transition-all group"
+                        >
+                          <span className="text-stone-800 font-medium">{idx + 1}. {staff?.name || id}</span>
+                          <button type="button" onClick={() => setDayShiftOrder(dayShiftOrder.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity">削除</button>
+                        </div>
+                      );
+                    })}
+                    {dayShiftOrder.length === 0 && (
+                      <p className="text-stone-500 text-sm py-4 text-center border-2 border-dashed border-slate-300 rounded-lg">ここにドロップで追加</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-emerald-200 rounded-xl bg-emerald-50/50 overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-emerald-100 border-b border-emerald-200 shrink-0">開始選択</h4>
+                  <p className="text-xs text-stone-600 px-2 py-1 shrink-0">この月の開始する人を選ぶ</p>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                    {dayShiftOrder.map((id, idx) => {
+                      const staff = staffData.find(s => s.id === id);
+                      const isStart = dayShiftStartId === id;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setDayShiftStartId(id)}
+                          className={`w-full text-left px-3 py-4 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:border-emerald-400 hover:bg-emerald-50'}`}
+                        >
+                          {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
+                        </button>
+                      );
+                    })}
+                    {dayShiftOrder.length === 0 && <p className="text-stone-500 text-sm py-4 text-center">順番を設定してください</p>}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -437,37 +963,92 @@ export default function ShiftScheduleScreen({ onBack }) {
 
         {showPairModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5 z-50">
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 max-w-md w-full max-h-96 overflow-y-auto shadow-xl">
-              <div className="flex justify-between items-center mb-3">
+            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl">
+              <div className="flex justify-between items-center mb-3 shrink-0">
                 <h3 className="font-bold text-stone-800 text-2xl">ペア設定</h3>
-                <button onClick={() => setShowPairModal(false)} className="text-stone-400 hover:text-stone-600 transition-colors text-2xl">✕</button>
+                <button onClick={() => { setShowPairModal(false); setPairIncompleteFirst(null); }} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
               </div>
-              <div className="mb-3">
-                <label className="block text-base mb-1.5 text-stone-600 font-semibold uppercase tracking-wider">新しいペアを追加</label>
-                <div className="flex gap-2">
-                  <select id="pair-person1" className="flex-1 p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 text-sm focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none transition-all">
-                    <option value="">-- 職員1 --</option>
-                    {staffData.map(s => (<option key={s.id} value={s.id}>{s.name}</option>))}
-                  </select>
-                  <select id="pair-person2" className="flex-1 p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 text-sm focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none transition-all">
-                    <option value="">-- 職員2 --</option>
-                    {staffData.map(s => (<option key={s.id} value={s.id}>{s.name}</option>))}
-                  </select>
+              <p className="text-sm text-stone-600 mb-3 shrink-0">左の職員を右へドラッグしてペアを構成。1人目を「新規ペア」にドロップ→2人目をその行にドロップ。</p>
+              <div className="flex gap-4 flex-1 min-h-0">
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-slate-300 rounded-xl bg-white overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-slate-100 border-b border-slate-300 shrink-0">職員一覧</h4>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                    {staffData.filter(s => !pairs.some(p => p.person1 === s.id || p.person2 === s.id) && s.id !== pairIncompleteFirst).map(staff => (
+                      <div
+                        key={staff.id}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }}
+                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-orange-400 hover:bg-orange-50 transition-all"
+                      >
+                        {staff.name} ({staff.id})
+                      </div>
+                    ))}
+                    {staffData.filter(s => !pairs.some(p => p.person1 === s.id || p.person2 === s.id) && s.id !== pairIncompleteFirst).length === 0 && (
+                      <p className="text-stone-500 text-sm py-4 text-center">全員がペアに含まれています</p>
+                    )}
+                  </div>
                 </div>
-                <button onClick={() => { const p1 = document.getElementById('pair-person1').value; const p2 = document.getElementById('pair-person2').value; addPair(p1, p2); document.getElementById('pair-person1').value = ''; document.getElementById('pair-person2').value = ''; }} className="w-full mt-3 bg-orange-500 hover:bg-orange-400 text-white py-3 rounded-xl transition-all font-semibold shadow-sm hover:-translate-y-0.5">追加</button>
-              </div>
-              <div className="space-y-2">
-                <h4 className="font-bold text-sm text-stone-600 uppercase tracking-wider">現在のペア：</h4>
-                {pairs.map((pair, idx) => {
-                  const staff1 = staffData.find(s => s.id === pair.person1);
-                  const staff2 = staffData.find(s => s.id === pair.person2);
-                  return (
-                    <div key={idx} className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-400">
-                      <span className="text-stone-800">{staff1?.name || pair.person1} ↔ {staff2?.name || pair.person2}</span>
-                      <button onClick={() => setPairs(pairs.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold transition-colors">削除</button>
-                    </div>
-                  );
-                })}
+                <div className="flex-1 min-w-0 flex flex-col border-2 border-orange-300 rounded-xl bg-orange-50/30 overflow-hidden">
+                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-orange-100 border-b border-orange-300 shrink-0">ペア一覧</h4>
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-[120px]">
+                    {pairs.map((pair, idx) => {
+                      const staff1 = staffData.find(s => s.id === pair.person1);
+                      const staff2 = staffData.find(s => s.id === pair.person2);
+                      return (
+                        <div key={idx} className="flex justify-between items-center px-3 py-2 rounded-lg border border-orange-300 bg-white transition-all group">
+                          <span className="text-stone-800 font-medium">{staff1?.name || pair.person1} ↔ {staff2?.name || pair.person2}</span>
+                          <button type="button" onClick={() => setPairs(pairs.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity">削除</button>
+                        </div>
+                      );
+                    })}
+                    {pairIncompleteFirst && (() => {
+                      const staff = staffData.find(s => s.id === pairIncompleteFirst);
+                      return (
+                        <div
+                          className="px-3 py-2 rounded-lg border-2 border-dashed border-orange-400 bg-orange-50 min-h-[44px] flex items-center justify-between"
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-orange-400'); }}
+                          onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-orange-400'); }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            e.currentTarget.classList.remove('ring-2', 'ring-orange-400');
+                            const raw = e.dataTransfer.getData('text/plain');
+                            if (!raw) return;
+                            try {
+                              const { source, staffId } = JSON.parse(raw);
+                              if (source === 'left' && staffId && staffId !== pairIncompleteFirst) {
+                                addPair(pairIncompleteFirst, staffId);
+                                setPairIncompleteFirst(null);
+                              }
+                            } catch (_) {}
+                          }}
+                        >
+                          <span className="text-stone-700">{staff?.name || pairIncompleteFirst} — </span>
+                          <span className="text-orange-600 text-sm font-medium">2人目をここにドロップ</span>
+                          <button type="button" onClick={() => setPairIncompleteFirst(null)} className="text-slate-500 hover:text-slate-700 text-sm">キャンセル</button>
+                        </div>
+                      );
+                    })()}
+                    {!pairIncompleteFirst && (
+                      <div
+                        className="text-stone-500 text-sm py-4 text-center border-2 border-dashed border-slate-300 rounded-lg min-h-[52px] flex items-center justify-center"
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-orange-400', 'bg-orange-50'); }}
+                        onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-orange-400', 'bg-orange-50'); }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.currentTarget.classList.remove('ring-2', 'ring-orange-400', 'bg-orange-50');
+                          const raw = e.dataTransfer.getData('text/plain');
+                          if (!raw) return;
+                          try {
+                            const { source, staffId } = JSON.parse(raw);
+                            if (source === 'left' && staffId) setPairIncompleteFirst(staffId);
+                          } catch (_) {}
+                        }}
+                      >
+                        新規ペア: 1人目をここにドロップ
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

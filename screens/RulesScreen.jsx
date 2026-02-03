@@ -102,7 +102,7 @@ const EXPLANATIONS = {
     body: (
       <>
         <p className="text-stone-700 text-base mb-3">各職員について、モダリティごとに 0〜4 またはトレーニングのスコアを付けます。</p>
-        <div className="bg-violet-50 border border-violet-200 p-4 rounded-xl text-base space-y-2 text-stone-700">
+        <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl text-base space-y-2 text-slate-700">
           <div><strong className="text-violet-600">0</strong> … 適正なし（このモダリティには配置しない）</div>
           <div><strong className="text-violet-600">1</strong> … 優先度低</div>
           <div><strong className="text-violet-600">2</strong> … 優先度中</div>
@@ -152,7 +152,7 @@ export default function RulesScreen({ onBack }) {
       <div className="relative w-full max-w-6xl mx-auto">
         <div className="flex justify-between items-center gap-4 mb-4">
           <h2 className="text-3xl font-bold text-stone-800">ルール確認</h2>
-          <button onClick={onBack} className="px-5 py-2.5 bg-stone-50 hover:bg-slate-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
+          <button onClick={onBack} className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-semibold transition-all shadow-sm">
             ← メインメニュー
           </button>
         </div>
@@ -170,8 +170,8 @@ export default function RulesScreen({ onBack }) {
                     onClick={() => setSelectedId(selectedId === id ? null : id)}
                     className={`flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 text-left font-semibold text-lg transition-all ${
                       selectedId === id
-                        ? 'bg-violet-100 border-violet-500 text-violet-900 ring-2 ring-violet-200'
-                        : 'bg-white border-slate-300 text-stone-800 hover:border-slate-400 hover:bg-slate-50'
+                        ? 'bg-blue-100 border-blue-600 text-blue-900 ring-2 ring-blue-200'
+                        : 'bg-white border-slate-500 text-slate-800 hover:border-slate-600 hover:bg-slate-50'
                     }`}
                   >
                     <span className="text-xl shrink-0">{icon}</span>

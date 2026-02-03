@@ -192,10 +192,10 @@ export default function AllocationScreen({ onBack }) {
         <div className="flex justify-between items-center gap-4 mb-4">
           <h2 className="text-3xl font-bold text-stone-800">配置表作成</h2>
           <div className="flex items-center gap-2">
-            <button onClick={onBack} className="px-5 py-2.5 bg-slate-50 hover:bg-stone-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
+            <button onClick={onBack} className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-semibold transition-all shadow-sm">
               ← メインメニュー
             </button>
-            <button onClick={exportAllocationCSV} className="px-5 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-lg font-semibold transition-all">
+            <button onClick={exportAllocationCSV} className="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 border border-slate-500 text-slate-800 rounded-xl text-lg font-semibold transition-all">
               CSV
             </button>
           </div>
@@ -208,7 +208,7 @@ export default function AllocationScreen({ onBack }) {
             <span className="text-stone-500 text-2xl font-bold">→</span>
             <span className="px-6 py-3 bg-stone-100 border-2 border-stone-300 rounded-2xl text-stone-800 text-xl font-semibold">週休割り当て</span>
             <span className="text-stone-500 text-2xl font-bold">→</span>
-            <button onClick={autoAllocate} disabled={isAutoAllocating || calendar.length === 0} className="px-6 py-3 bg-violet-600 hover:bg-violet-500 disabled:bg-stone-200 disabled:text-stone-400 disabled:cursor-not-allowed text-white rounded-2xl text-xl font-semibold transition-all shadow-md">
+            <button onClick={autoAllocate} disabled={isAutoAllocating || calendar.length === 0} className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-stone-200 disabled:text-stone-400 disabled:cursor-not-allowed text-white rounded-2xl text-xl font-semibold transition-all shadow-md">
               {isAutoAllocating ? '配置中...' : '配置表作成'}
             </button>
           </div>

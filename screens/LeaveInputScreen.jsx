@@ -183,7 +183,7 @@ export default function LeaveInputScreen({ onBack }) {
       <div className="relative w-full max-w-full">
         <div className="flex justify-between items-center gap-4 mb-4">
           <h2 className="text-3xl font-bold text-stone-800">休暇・出張管理</h2>
-          <button onClick={onBack} className="px-5 py-2.5 bg-stone-50 hover:bg-slate-100 border-2 border-slate-400 rounded-xl text-stone-800 text-lg font-semibold transition-all shadow-sm">
+          <button onClick={onBack} className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-semibold transition-all shadow-sm">
             ← メインメニュー
           </button>
         </div>
@@ -298,7 +298,7 @@ export default function LeaveInputScreen({ onBack }) {
             <div className="bg-stone-50 border-2 border-slate-400 rounded-2xl p-6 max-w-md w-full shadow-xl">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="font-bold text-stone-800 text-xl">休暇・出張登録{selectedDates.length > 1 && <span className="text-rose-500 ml-2">({selectedDates.length}日間)</span>}</h3>
-                <button onClick={() => { setShowLeaveModal(false); setSelectedDates([]); }} className="text-stone-400 hover:text-stone-700 transition-colors text-2xl">✕</button>
+                <button onClick={() => { setShowLeaveModal(false); setSelectedDates([]); }} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
               </div>
               <div className="bg-stone-50 p-3 rounded-lg mb-4 text-base text-stone-700">期間: {selectedDates[0]} 〜 {selectedDates[selectedDates.length - 1]}</div>
               <div className="space-y-4">
@@ -318,7 +318,7 @@ export default function LeaveInputScreen({ onBack }) {
                 </div>
                 <div className="flex gap-2 pt-2">
                   <button onClick={addLeave} className="flex-1 bg-rose-500 hover:bg-rose-400 text-white py-2.5 rounded-xl text-lg font-semibold transition-all shadow-sm">✓ 登録</button>
-                  <button onClick={() => { setShowLeaveModal(false); setSelectedDates([]); }} className="flex-1 bg-slate-100 hover:bg-stone-200 text-stone-700 py-2.5 rounded-xl text-lg font-semibold transition-all">キャンセル</button>
+                  <button onClick={() => { setShowLeaveModal(false); setSelectedDates([]); }} className="flex-1 bg-white hover:bg-slate-100 border-2 border-slate-600 text-slate-800 py-2.5 rounded-xl text-lg font-semibold transition-all">キャンセル</button>
                 </div>
               </div>
             </div>

@@ -8,3 +8,14 @@ body {
   background: #a78bfa;
   color: #0f172a;
 }
+
+@layer components {
+  /* 全画面共通: 戻る・ヘッダー用ボタン */
+  .btn-header {
+    @apply min-h-[40px] inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-semibold border-2 border-slate-600 bg-white hover:bg-slate-100 transition-all shadow-sm text-stone-800;
+  }
+  /* 全画面共通: パネル内・実行ボタン（高さと文字揃え統一） */
+  .btn-panel {
+    @apply min-h-[40px] inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-semibold transition-all;
+  }
+}

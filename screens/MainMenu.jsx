@@ -171,6 +171,104 @@ export default function MainMenu({ onNavigate }) {
   const weekLabels = ['日', '月', '火', '水', '木', '金', '土'];
   const holidays = getHolidays(year);
 
+  const formatDateHeader = (dateStr) => {
+    const d = new Date(dateStr + 'T12:00:00');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const w = ['日', '月', '火', '水', '木', '金', '土'][d.getDay()];
+    return `${mm}/${dd} ${w}`;
+  };
+
+  /** 配置表を画像と同じ形式（夜勤・B → モダリティ → 日勤・サポート → 休暇者）で描画 */
+  const renderAllocationTable = (dateStr, allocation, modalityData, staffData, name, manualStaff, scheduleRow, leaveInfo) => {
+    const dayAlloc = dateStr && allocation[dateStr] ? allocation[dateStr] : null;
+    const hasAllocation = !!dayAlloc;
+    const renderScheduleRow = (label, staffId) => (
+      <tr key={label} className="border-b border-stone-200 hover:bg-slate-50/50">
+        <td className="py-2 px-3 font-semibold text-stone-700 bg-slate-50/80">{label}</td>
+        <td className="py-2 px-3 align-top border-l-2 border-stone-200 text-stone-800">{staffId ? name(staffId) : '－'}</td>
+        <td className="py-2 px-3 align-top border-l border-stone-200 text-stone-800">{staffId ? name(staffId) : '－'}</td>
+      </tr>
+    );
+
+    const leaveLines = leaveInfo ? (() => {
+      const parts = [];
+      if (leaveInfo.dayOffId) parts.push(`非番：${name(leaveInfo.dayOffId)}`);
+      const woIds = leaveInfo.weeklyOffIds || [];
+      const leave週休 = (leaveInfo.dayLeaves || []).filter(l => l.leaveType === '週休').map(l => l.staffId);
+      const 週休Ids = [...new Set([...woIds, ...leave週休])];
+      if (週休Ids.length) parts.push(`週休：${週休Ids.map(name).join('、')}`);
+      ['出張', 'リフ休', '年休', '特別休'].forEach(t => {
+        const byType = (leaveInfo.dayLeaves || []).filter(l => l.leaveType === t).map(l => name(l.staffId));
+        if (byType.length) parts.push(`${t}：${byType.join('、')}`);
+      });
+      return parts;
+    })() : [];
+
+    return (
+      <table className="w-full border-collapse text-left">
+        <thead>
+          <tr className="border-b-2 border-stone-400">
+            <th className="py-2.5 px-3 font-bold text-stone-800 bg-slate-100 w-[140px]">モダリティ</th>
+            <th className="py-2.5 px-3 font-bold text-stone-800 bg-slate-100 border-l-2 border-stone-300">{formatDateHeader(dateStr)} AM</th>
+            <th className="py-2.5 px-3 font-bold text-stone-800 bg-slate-100 border-l border-stone-300">{formatDateHeader(dateStr)} PM</th>
+          </tr>
+        </thead>
+        <tbody>
+          {hasAllocation && modalityData.map((mod) => {
+            const slot = dayAlloc[mod.id];
+            const am = Array.isArray(slot) ? [] : (slot?.am || []);
+            const pm = Array.isArray(slot) ? [] : (slot?.pm || []);
+            const amSorted = [...am].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+            const pmSorted = [...pm].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+            return (
+              <tr key={mod.id} className="border-b border-stone-200 hover:bg-slate-50/50">
+                <td className="py-2 px-3 font-semibold text-stone-700 bg-slate-50/80">{mod.name}</td>
+                <td className="py-2 px-3 align-top border-l-2 border-stone-200 text-stone-800">
+                  <div className="flex flex-col gap-0.5">
+                    {amSorted.length ? amSorted.map((id) => (
+                      <span key={id} className={manualStaff.includes(id) ? 'text-red-600 font-medium' : ''}>{name(id)}</span>
+                    )) : '－'}
+                  </div>
+                </td>
+                <td className="py-2 px-3 align-top border-l border-stone-200 text-stone-800">
+                  <div className="flex flex-col gap-0.5">
+                    {pmSorted.length ? pmSorted.map((id) => (
+                      <span key={id} className={manualStaff.includes(id) ? 'text-red-600 font-medium' : ''}>{name(id)}</span>
+                    )) : '－'}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+          {!hasAllocation && (
+            <tr>
+              <td colSpan={3} className="py-3 px-3 text-stone-600 text-sm">この日のモダリティ配置データがありません。配置表作成で作成・保存してください。</td>
+            </tr>
+          )}
+          {scheduleRow && (
+            <>
+              {renderScheduleRow('日勤者', scheduleRow.dayShift)}
+              {renderScheduleRow('サポート', scheduleRow.support)}
+              {renderScheduleRow('夜勤者', scheduleRow.nightShift)}
+              {renderScheduleRow('B', scheduleRow.b)}
+            </>
+          )}
+          <tr className="border-b border-stone-200 hover:bg-slate-50/50">
+            <td className="py-2 px-3 font-semibold text-stone-700 bg-slate-50/80">休暇者</td>
+            <td colSpan={2} className="py-2 px-3 align-top border-l-2 border-stone-200 text-stone-800">
+              {leaveLines.length ? (
+                <div className="flex flex-col gap-0.5">
+                  {leaveLines.map((line, i) => (<span key={i}>{line}</span>))}
+                </div>
+              ) : '－'}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    );
+  };
+
   const openComment = (dateStr) => {
     setSelectedDate(dateStr);
     const text = comments[dateStr] || '';
@@ -254,14 +352,14 @@ export default function MainMenu({ onNavigate }) {
       <div className="relative flex flex-col gap-0 w-full max-w-6xl mx-auto flex-1 min-h-0">
         {/* 左：ボタン / 右：カレンダー */}
         <div className="flex gap-6 w-full items-stretch flex-1 min-h-0">
-          <div className="shrink-0 w-[520px] flex flex-col min-h-0 bg-slate-50 rounded-2xl border-2 border-slate-400 shadow-sm p-2">
+          <div className="shrink-0 w-[420px] flex flex-col min-h-0 bg-slate-50 rounded-2xl border-2 border-slate-400 shadow-sm p-2">
             <div className="flex-1 flex flex-col gap-1.5 min-h-0 min-w-0">
-              <MenuButton compact className="flex-1 min-h-[56px]" icon="📝" title="職員情報入力" detail="職員の登録・編集、各モダリティの配置スコア（0〜4）を設定" onClick={() => onNavigate('staff-db')} accent="violet" />
-              <MenuButton compact className="flex-1 min-h-[56px]" icon="⚙️" title="モダリティ情報入力" detail="配置先モダリティの追加、必要人数（一律または曜日別）の設定" onClick={() => onNavigate('modality-db')} accent="cyan" />
-              <MenuButton compact className="flex-1 min-h-[56px]" icon="🏖️" title="休暇・出張入力" detail="休暇・出張の日付と職員を登録し、カレンダーに反映" onClick={() => onNavigate('leave-input')} accent="rose" />
-              <MenuButton compact className="flex-1 min-h-[56px]" icon="🗓️" title="当番表作成" detail="期間を設定し、夜勤・日勤・週休の順番・ペアを割り当てて保存" onClick={() => onNavigate('shift-schedule')} accent="amber" />
-              <MenuButton compact className="flex-1 min-h-[56px]" icon="📊" title="配置表作成" detail="当番表を読み込み、スコアに基づいて自動配置。保存・CSV出力" onClick={() => onNavigate('allocation')} accent="indigo" />
-              <MenuButton compact className="flex-1 min-h-[56px]" icon="📜" title="ルール" detail="使い方の流れ、配置スコア・配置対象外・自動配置のルール確認" onClick={() => onNavigate('rules')} accent="emerald" />
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="📝" title="職員情報入力" detail="職員の登録・編集、各モダリティの配置スコア（0〜4）を設定" onClick={() => onNavigate('staff-db')} accent="violet" />
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="⚙️" title="モダリティ情報入力" detail="配置先モダリティの追加、必要人数（一律または曜日別）の設定" onClick={() => onNavigate('modality-db')} accent="cyan" />
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="🏖️" title="休暇・出張入力" detail="休暇・出張の日付と職員を登録し、カレンダーに反映" onClick={() => onNavigate('leave-input')} accent="rose" />
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="🗓️" title="当番表作成" detail="期間を設定し、夜勤・日勤・週休の順番・ペアを割り当てて保存" onClick={() => onNavigate('shift-schedule')} accent="amber" />
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="📊" title="配置表作成" detail="当番表を読み込み、スコアに基づいて自動配置。保存・CSV出力" onClick={() => onNavigate('allocation')} accent="indigo" />
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="📜" title="ルール" detail="使い方の流れ、配置スコア・配置対象外・自動配置のルール確認" onClick={() => onNavigate('rules')} accent="emerald" />
               <input
                 ref={restoreInputRef}
                 type="file"
@@ -297,7 +395,7 @@ export default function MainMenu({ onNavigate }) {
             </div>
           </div>
 
-          {/* カレンダー（職員DBボタン上端と揃う） */}
+          {/* 右：カレンダー（日付クリックでその日の配置表＋コメントをモーダル表示） */}
           <div className="flex-1 min-w-0 flex flex-col">
             <div className="bg-slate-50/95 backdrop-blur-sm rounded-2xl border-2 border-slate-400 shadow-sm p-4 flex-1 flex flex-col min-h-0">
             <div className="flex items-center justify-center gap-3 mb-3 shrink-0">
@@ -325,7 +423,7 @@ export default function MainMenu({ onNavigate }) {
                 </svg>
               </button>
             </div>
-            <div className="grid grid-cols-7 gap-1.5">
+            <div className="grid grid-cols-7 gap-2 flex-1 min-h-0 auto-rows-fr">
               {weekLabels.map((label, i) => (
                 <div
                   key={label}
@@ -336,7 +434,7 @@ export default function MainMenu({ onNavigate }) {
               ))}
               {days.map((cell, idx) => {
                 if (!cell) {
-                  return <div key={`empty-${idx}`} className="min-h-[68px]" />;
+                  return <div key={`empty-${idx}`} className="min-h-[88px]" />;
                 }
                 const comment = comments[cell.dateStr];
                 const isSun = cell.dayOfWeek === 0;
@@ -348,13 +446,13 @@ export default function MainMenu({ onNavigate }) {
                     key={cell.dateStr}
                     type="button"
                     onClick={() => openComment(cell.dateStr)}
-                    className={`min-h-[68px] p-2 rounded-lg border-2 border-slate-400 hover:border-violet-500 hover:bg-violet-50/50 text-left transition-all flex flex-col ${isSun || isSat ? 'bg-slate-100' : 'bg-slate-50/50'}`}
+                    className={`min-h-[88px] p-2 rounded-lg border-2 border-slate-400 hover:border-violet-500 hover:bg-violet-50/50 text-left transition-all flex flex-col ${isSun || isSat ? 'bg-slate-100' : 'bg-slate-50/50'}`}
                   >
                     <span className={`text-lg font-bold ${dayColor} shrink-0`}>
                       {cell.day}
                     </span>
                     {comment ? (
-                      <span className="mt-0.5 text-sm text-stone-700 leading-tight break-words line-clamp-2 block font-medium">
+                      <span className="mt-0.5 text-xs text-stone-700 leading-tight break-words line-clamp-2 block font-medium">
                         {comment}
                       </span>
                     ) : null}
@@ -364,13 +462,13 @@ export default function MainMenu({ onNavigate }) {
             </div>
             <p className="text-stone-700 text-sm mt-2 shrink-0 font-medium">日付をクリックでコメントを追加・編集</p>
 
-            <div className="mt-3 flex-1 flex flex-col min-h-0 min-w-0">
-              <label className="block text-stone-800 text-base font-semibold mb-1.5 shrink-0">{year}年{month + 1}月のメモ</label>
+            <div className="mt-2 shrink-0">
+              <label className="block text-stone-800 text-sm font-semibold mb-1 shrink-0">{year}年{month + 1}月のメモ</label>
               <textarea
                 value={monthlyComment}
                 onChange={(e) => saveMonthlyComment(e.target.value)}
                 placeholder="月ごとの自由メモ..."
-                className="w-full flex-1 min-h-[80px] p-2.5 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-900 placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-none text-base font-medium"
+                className="w-full min-h-[52px] max-h-[80px] p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-900 placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-y text-sm font-medium"
               />
             </div>
           </div>
@@ -378,53 +476,130 @@ export default function MainMenu({ onNavigate }) {
         </div>
       </div>
 
-      {/* コメント編集モーダル */}
-      {selectedDate !== null && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-stone-50 border-2 border-stone-300 rounded-2xl p-6 w-full max-w-md shadow-xl">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-stone-800 text-lg">{selectedDate} のコメント</h3>
-              <button
-                type="button"
-                onClick={() => closeComment('')}
-                className="text-stone-400 hover:text-stone-600 text-2xl leading-none"
-              >
-                ×
-              </button>
-            </div>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                closeComment();
-              }}
-            >
-              <textarea
-                ref={textareaRef}
-                value={editComment}
-                onChange={handleEditChange}
-                placeholder="メモを入力..."
-                className="w-full p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-900 text-lg font-medium placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-y min-h-[120px]"
-                rows={4}
-              />
-              <div className="flex gap-2 mt-4">
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm"
-                >
-                  OK
-                </button>
+      {/* 日付クリック時モーダル（その日の配置表 + コメント） */}
+      {selectedDate !== null && (() => {
+        const dateStr = selectedDate;
+        const allocationData = (() => {
+          try {
+            const raw = localStorage.getItem('allocationData');
+            return raw ? JSON.parse(raw) : null;
+          } catch (_) { return null; }
+        })();
+        const scheduleData = (() => {
+          try {
+            const raw = localStorage.getItem('scheduleData');
+            return raw ? JSON.parse(raw) : null;
+          } catch (_) { return null; }
+        })();
+        const leaveData = (() => {
+          try {
+            const raw = localStorage.getItem('leaveData');
+            return raw ? JSON.parse(raw) : null;
+          } catch (_) { return null; }
+        })();
+        const modalityData = (() => {
+          try {
+            const raw = localStorage.getItem('modalityData');
+            return raw ? JSON.parse(raw) : [];
+          } catch (_) { return []; }
+        })();
+        const staffData = (() => {
+          try {
+            const raw = localStorage.getItem('staffData');
+            return raw ? JSON.parse(raw) : [];
+          } catch (_) { return []; }
+        })();
+        const schedule = scheduleData?.schedule || {};
+        const manualOverrides = scheduleData?.manualOverrides || {};
+        const weeklyOff = scheduleData?.weeklyOff || {};
+        const surgeryDays = scheduleData?.surgeryDays || [];
+        const leaves = leaveData?.leaveData || {};
+        const allocation = allocationData?.allocation || {};
+        const mergeSched = (d) => {
+          const s = schedule[d] || {};
+          const o = manualOverrides[d] || {};
+          return { ...s, ...o };
+        };
+        const name = (id) => (id ? (staffData.find(s => s.id === id)?.name || id) : '');
+        const daySched = mergeSched(dateStr);
+        const nextDate = (() => {
+          const d = new Date(dateStr + 'T12:00:00');
+          d.setDate(d.getDate() + 1);
+          const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+          return `${y}-${m}-${day}`;
+        })();
+        const nextSched = mergeSched(nextDate);
+        const bPerson = surgeryDays.includes(dateStr) ? (nextSched.nightShift ?? nextSched.nightShiftManual) : (daySched.b ?? daySched.bManual);
+        const scheduleRow = {
+          dayShift: daySched.dayShift ?? daySched.dayShiftManual,
+          support: daySched.support ?? daySched.supportManual,
+          nightShift: daySched.nightShift ?? daySched.nightShiftManual,
+          b: bPerson
+        };
+        const leaveInfo = {
+          dayOffId: daySched.dayOff ?? daySched.dayOffManual,
+          weeklyOffIds: weeklyOff[dateStr] || [],
+          dayLeaves: leaves[dateStr] || []
+        };
+        const manualStaff = allocation[dateStr]?._manualStaff || [];
+
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-stone-50 border-2 border-stone-300 rounded-2xl p-6 w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-xl">
+              <div className="flex justify-between items-center mb-3 shrink-0">
+                <h3 className="font-bold text-stone-800 text-lg">{dateStr}</h3>
                 <button
                   type="button"
                   onClick={() => closeComment('')}
-                  className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-lg font-medium transition-all"
+                  className="text-stone-400 hover:text-stone-600 text-2xl leading-none"
                 >
-                  クリア
+                  ×
                 </button>
               </div>
-            </form>
+
+              <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
+                {/* 左：その日の配置表（画像と同じ形式・モダリティ×AM/PM） */}
+                <div className="flex-1 min-w-0 overflow-y-auto border border-slate-300 rounded-xl bg-white p-3">
+                  {renderAllocationTable(dateStr, allocation, modalityData, staffData, name, manualStaff, scheduleRow, leaveInfo)}
+                </div>
+
+                {/* 右：コメント */}
+                <form
+                  className="flex-1 min-w-0 flex flex-col border border-slate-300 rounded-xl bg-white p-3"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    closeComment();
+                  }}
+                >
+                  <label className="text-stone-700 font-semibold text-sm mb-2 shrink-0">コメント・メモ</label>
+                  <textarea
+                    ref={textareaRef}
+                    value={editComment}
+                    onChange={handleEditChange}
+                    placeholder="メモを入力..."
+                    className="w-full flex-1 min-h-[120px] p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-900 text-base font-medium placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-none"
+                  />
+                  <div className="flex gap-2 mt-3 shrink-0">
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm"
+                    >
+                      OK
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => closeComment('')}
+                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-lg font-medium transition-all"
+                    >
+                      クリア
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

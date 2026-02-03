@@ -75,6 +75,8 @@ export default function LeaveInputScreen({ onBack }) {
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState('');
   const [selectedLeaveType, setSelectedLeaveType] = useState('');
+  const [selectedDateForDetail, setSelectedDateForDetail] = useState(null);
+  const selectionExtendedRef = useRef(false);
 
   const monthCalendar = generateMonthCalendar(currentMonth);
   const holidays = getHolidays(currentMonth.getFullYear());
@@ -88,6 +90,7 @@ export default function LeaveInputScreen({ onBack }) {
   }, []);
 
   const handleDateMouseDown = (date) => {
+    selectionExtendedRef.current = false;
     setIsSelecting(true);
     setSelectedDates([date]);
   };
@@ -95,19 +98,30 @@ export default function LeaveInputScreen({ onBack }) {
   const handleDateMouseEnter = (date) => {
     if (isSelecting && selectedDates.length > 0) {
       const start = selectedDates[0];
-      const allDates = monthCalendar.map(d => d.date);
+      const allDates = monthCalendar.filter(d => d).map(d => d.date);
       const startIdx = allDates.indexOf(start);
       const endIdx = allDates.indexOf(date);
-      const minIdx = Math.min(startIdx, endIdx);
-      const maxIdx = Math.max(startIdx, endIdx);
-      setSelectedDates(allDates.slice(minIdx, maxIdx + 1));
+      if (startIdx !== -1 && endIdx !== -1) {
+        const minIdx = Math.min(startIdx, endIdx);
+        const maxIdx = Math.max(startIdx, endIdx);
+        const next = allDates.slice(minIdx, maxIdx + 1);
+        if (next.length > 1) selectionExtendedRef.current = true;
+        setSelectedDates(next);
+      }
     }
   };
 
   const handleDateMouseUp = () => {
     if (selectedDates.length > 0) {
       setIsSelecting(false);
-      setShowLeaveModal(true);
+      const isSingleClick = selectedDates.length === 1 && !selectionExtendedRef.current;
+      if (isSingleClick) {
+        setSelectedDateForDetail(selectedDates[0]);
+        setShowLeaveModal(false);
+      } else {
+        setShowLeaveModal(true);
+        setSelectedDateForDetail(null);
+      }
     }
   };
 
@@ -139,6 +153,22 @@ export default function LeaveInputScreen({ onBack }) {
     alert('✅ 削除しました');
   };
 
+  const updateLeaveType = (date, staffId, newLeaveType) => {
+    const newLeaveData = { ...leaveData };
+    if (!newLeaveData[date]) return;
+    const idx = newLeaveData[date].findIndex(item => item.staffId === staffId);
+    if (idx === -1) return;
+    newLeaveData[date] = [...newLeaveData[date]];
+    newLeaveData[date][idx] = { ...newLeaveData[date][idx], leaveType: newLeaveType };
+    setLeaveData(newLeaveData);
+  };
+
+  const addLeaveForSingleDate = (date) => {
+    setSelectedDateForDetail(null);
+    setSelectedDates([date]);
+    setShowLeaveModal(true);
+  };
+
   const leaveDataLoaded = useRef(false);
   useEffect(() => {
     const t = setTimeout(() => { leaveDataLoaded.current = true; }, 200);
@@ -155,25 +185,32 @@ export default function LeaveInputScreen({ onBack }) {
     setCurrentMonth(newDate);
   };
 
-  /** 週休・リフ休のみの職員別日数 { staffId: { 週休: n, リフ休: n } } */
+  /** 年間（1/1〜12/31）の年休・リフ休の職員別日数 { staffId: { 年休: n, リフ休: n } } */
+  const yearForCounts = currentMonth.getFullYear();
   const staffLeaveCounts = useMemo(() => {
     const counts = {};
-    Object.values(leaveData).forEach(leaves => {
+    const yearStart = `${yearForCounts}-01-01`;
+    const yearEnd = `${yearForCounts}-12-31`;
+    Object.entries(leaveData).forEach(([dateStr, leaves]) => {
+      if (dateStr < yearStart || dateStr > yearEnd) return;
       leaves.forEach(({ staffId, leaveType }) => {
-        if (leaveType !== '週休' && leaveType !== 'リフ休') return;
-        if (!counts[staffId]) counts[staffId] = { 週休: 0, リフ休: 0 };
+        if (leaveType !== '年休' && leaveType !== 'リフ休') return;
+        if (!counts[staffId]) counts[staffId] = { 年休: 0, リフ休: 0 };
         counts[staffId][leaveType]++;
       });
     });
     return counts;
-  }, [leaveData]);
+  }, [leaveData, yearForCounts]);
 
+  /** 入力した職員一覧をすべて表示し、右に年休・リフ休の年間総カウント */
   const staffListWithCounts = useMemo(() => {
-    const ids = Object.keys(staffLeaveCounts);
-    return staffData
-      .filter(s => ids.includes(s.id))
+    return [...staffData]
       .sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }))
-      .map(s => ({ staff: s, 週休: staffLeaveCounts[s.id].週休, リフ休: staffLeaveCounts[s.id].リフ休 }));
+      .map(s => ({
+        staff: s,
+        年休: staffLeaveCounts[s.id]?.年休 ?? 0,
+        リフ休: staffLeaveCounts[s.id]?.リフ休 ?? 0
+      }));
   }, [staffData, staffLeaveCounts]);
 
   return (
@@ -183,25 +220,26 @@ export default function LeaveInputScreen({ onBack }) {
       <div className="relative w-full max-w-full">
         <div className="flex justify-between items-center gap-4 mb-4">
           <h2 className="text-3xl font-bold text-stone-800">休暇・出張管理</h2>
-          <button onClick={onBack} className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-semibold transition-all shadow-sm">
+          <button onClick={onBack} className="btn-header">
             ← メインメニュー
           </button>
         </div>
 
         <div className="flex gap-6 items-start">
-          {/* 左: 職員一覧（週休・リフ休の日数） */}
+          {/* 左: 職員一覧（全員）＋ 年休・リフ休の年間総カウント（1/1〜12/31） */}
           <div className="w-[520px] shrink-0 flex flex-col">
             <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-4 shadow-md">
-              <h3 className="text-xl font-bold text-stone-800 mb-4">職員一覧（週休・リフ休）</h3>
+              <h3 className="text-xl font-bold text-stone-800 mb-1">職員一覧</h3>
+              <p className="text-stone-600 text-sm mb-4">{yearForCounts}年（1/1〜12/31）年休・リフ休</p>
               {staffListWithCounts.length === 0 ? (
-                <p className="text-stone-600 text-base">休暇を登録した職員がいません</p>
+                <p className="text-stone-600 text-base">職員が登録されていません（職員情報入力で登録）</p>
               ) : (
                 <div className="space-y-2.5 overflow-y-auto max-h-[70vh] pr-1">
-                  {staffListWithCounts.map(({ staff, 週休, リフ休 }) => (
+                  {staffListWithCounts.map(({ staff, 年休, リフ休 }) => (
                     <div key={staff.id} className="bg-white rounded-lg border border-slate-300 p-3 text-base flex items-center justify-between gap-3">
                       <span className="font-semibold text-stone-900 truncate min-w-0">{staff.name}</span>
                       <div className="flex gap-4 shrink-0 text-stone-700 font-medium">
-                        <span>週休 <strong className="text-stone-900">{週休}</strong>日</span>
+                        <span>年休 <strong className="text-stone-900">{年休}</strong>日</span>
                         <span>リフ休 <strong className="text-stone-900">{リフ休}</strong>日</span>
                       </div>
                     </div>
@@ -211,9 +249,9 @@ export default function LeaveInputScreen({ onBack }) {
             </div>
           </div>
 
-          {/* 右: カレンダー（左寄せ・マス左右を小さく） */}
+          {/* 右: カレンダー（大きく表示） */}
           <div className="flex-1 min-w-0 flex flex-col items-start">
-            <div className="bg-slate-50/95 backdrop-blur-sm rounded-2xl border-2 border-slate-400 p-6 shadow-sm w-full max-w-[960px]">
+            <div className="bg-slate-50/95 backdrop-blur-sm rounded-2xl border-2 border-slate-400 p-6 shadow-sm w-full max-w-[1200px]">
               <div className="flex items-center justify-center gap-4 mb-4 shrink-0">
                 <button
                   type="button"
@@ -239,18 +277,18 @@ export default function LeaveInputScreen({ onBack }) {
                   </svg>
                 </button>
               </div>
-              <div className="grid grid-cols-7 gap-2" onMouseUp={handleDateMouseUp} onMouseLeave={() => setIsSelecting(false)}>
+              <div className="grid grid-cols-7 gap-3" onMouseUp={handleDateMouseUp} onMouseLeave={() => setIsSelecting(false)}>
                 {['日', '月', '火', '水', '木', '金', '土'].map((day, i) => (
                   <div
                     key={day}
-                    className={`text-center text-base font-semibold py-2 ${i === 0 ? 'text-red-600' : i === 6 ? 'text-blue-700' : 'text-stone-600'}`}
+                    className={`text-center text-lg font-semibold py-2.5 ${i === 0 ? 'text-red-600' : i === 6 ? 'text-blue-700' : 'text-stone-600'}`}
                   >
                     {day}
                   </div>
                 ))}
                 {monthCalendar.map((day, idx) => {
                   if (!day) {
-                    return <div key={`empty-${idx}`} className="min-h-[88px]" />;
+                    return <div key={`empty-${idx}`} className="min-h-[140px]" />;
                   }
                   const isSelected = selectedDates.includes(day.date);
                   const dayLeaves = leaveData[day.date] || [];
@@ -266,18 +304,18 @@ export default function LeaveInputScreen({ onBack }) {
                       tabIndex={0}
                       onMouseDown={() => handleDateMouseDown(day.date)}
                       onMouseEnter={() => handleDateMouseEnter(day.date)}
-                      className={`min-h-[88px] p-3 rounded-lg border-2 cursor-pointer transition-all select-none flex flex-col text-left ${cellBg}`}
+                      className={`min-h-[140px] p-4 rounded-xl border-2 cursor-pointer transition-all select-none flex flex-col text-left ${cellBg}`}
                     >
-                      <span className={`text-xl font-bold ${dateColor} shrink-0`}>{day.day}</span>
-                      <div className="mt-1 space-y-0.5 flex-1 min-h-0 overflow-hidden">
+                      <span className={`text-2xl font-bold ${dateColor} shrink-0`}>{day.day}</span>
+                      <div className="mt-2 space-y-1 flex-1 min-h-0 overflow-hidden">
                         {dayLeaves.map((leave, leaveIdx) => {
                           const staff = staffData.find(s => s.id === leave.staffId);
                           return (
                             <div
                               key={leaveIdx}
-                              onClick={(e) => { e.stopPropagation(); removeLeave(day.date, leave.staffId); }}
-                              className={`text-xs px-1 py-0.5 rounded leading-tight truncate max-w-full ${colorMap[leave.leaveType] || 'bg-stone-200 text-stone-800'} hover:opacity-80 transition-opacity`}
-                              title={`${staff?.name || leave.staffId} (${leave.leaveType})`}
+                              onClick={(e) => e.stopPropagation()}
+                              className={`text-sm px-2 py-1 rounded leading-tight truncate max-w-full ${colorMap[leave.leaveType] || 'bg-stone-200 text-stone-800'}`}
+                              title={`${staff?.name || leave.staffId} (${leave.leaveType}) — 日付をクリックで編集`}
                             >
                               {staff?.name || leave.staffId} ({leave.leaveType})
                             </div>
@@ -288,7 +326,7 @@ export default function LeaveInputScreen({ onBack }) {
                   );
                 })}
               </div>
-              <p className="text-stone-700 text-base mt-3 shrink-0 font-medium">日付をドラッグして範囲選択 → 職員・種類を選んで登録。登録済みはクリックで削除</p>
+              <p className="text-stone-700 text-base mt-3 shrink-0 font-medium">日付をクリックでその日の登録を表示・編集。ドラッグで範囲選択して新規登録</p>
             </div>
           </div>
         </div>
@@ -317,9 +355,52 @@ export default function LeaveInputScreen({ onBack }) {
                   </select>
                 </div>
                 <div className="flex gap-2 pt-2">
-                  <button onClick={addLeave} className="flex-1 bg-rose-500 hover:bg-rose-400 text-white py-2.5 rounded-xl text-lg font-semibold transition-all shadow-sm">✓ 登録</button>
-                  <button onClick={() => { setShowLeaveModal(false); setSelectedDates([]); }} className="flex-1 bg-white hover:bg-slate-100 border-2 border-slate-600 text-slate-800 py-2.5 rounded-xl text-lg font-semibold transition-all">キャンセル</button>
+                  <button onClick={addLeave} className="btn-panel flex-1 bg-rose-500 hover:bg-rose-400 text-white shadow-sm">✓ 登録</button>
+                  <button onClick={() => { setShowLeaveModal(false); setSelectedDates([]); }} className="btn-panel flex-1 bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800">キャンセル</button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedDateForDetail && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5 z-50">
+            <div className="bg-stone-50 border-2 border-slate-400 rounded-2xl p-6 max-w-lg w-full shadow-xl max-h-[85vh] flex flex-col">
+              <div className="flex justify-between items-center mb-4 shrink-0">
+                <h3 className="font-bold text-stone-800 text-xl">休暇・出張 — {selectedDateForDetail}</h3>
+                <button onClick={() => setSelectedDateForDetail(null)} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-3 mb-4">
+                {(leaveData[selectedDateForDetail] || []).length === 0 ? (
+                  <p className="text-stone-600">この日は登録がありません</p>
+                ) : (
+                  (leaveData[selectedDateForDetail] || []).map((leave, leaveIdx) => {
+                    const staff = staffData.find(s => s.id === leave.staffId);
+                    return (
+                      <div key={leaveIdx} className="flex items-center gap-3 p-3 bg-white rounded-xl border-2 border-slate-200">
+                        <span className="font-semibold text-stone-800 min-w-[120px] truncate">{staff?.name || leave.staffId}</span>
+                        <select
+                          value={leave.leaveType}
+                          onChange={(e) => updateLeaveType(selectedDateForDetail, leave.staffId, e.target.value)}
+                          className="flex-1 p-2 bg-stone-50 border-2 border-slate-400 rounded-lg text-stone-800 focus:border-rose-400 outline-none"
+                        >
+                          {leaveTypes.map(type => (<option key={type} value={type}>{type}</option>))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => { removeLeave(selectedDateForDetail, leave.staffId); }}
+                          className="shrink-0 px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 font-medium"
+                        >
+                          削除
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <div className="flex gap-2 shrink-0 pt-2 border-t border-slate-200">
+                <button onClick={() => addLeaveForSingleDate(selectedDateForDetail)} className="btn-panel flex-1 bg-rose-500 hover:bg-rose-400 text-white shadow-sm">＋ この日に追加</button>
+                <button onClick={() => setSelectedDateForDetail(null)} className="btn-panel bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800">閉じる</button>
               </div>
             </div>
           </div>

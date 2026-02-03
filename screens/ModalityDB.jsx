@@ -96,10 +96,10 @@ export default function ModalityDB({ onBack }) {
         <div className="flex justify-between items-center mb-4 shrink-0">
           <h2 className="text-3xl font-bold text-stone-800">モダリティ情報入力</h2>
           <div className="flex items-center gap-2">
-            <button onClick={addModality} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
+            <button onClick={addModality} className="btn-panel bg-blue-600 hover:bg-blue-500 text-white shadow-sm">
               ➕ 追加
             </button>
-            <button onClick={onBack} className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 rounded-xl text-slate-800 text-lg font-semibold transition-all shadow-sm">
+            <button onClick={onBack} className="btn-header">
               ← メインメニュー
             </button>
           </div>
@@ -111,7 +111,7 @@ export default function ModalityDB({ onBack }) {
             {modalityData.length === 0 ? (
               <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-8 text-center shadow-md">
                 <p className="text-stone-700 text-xl mb-5">モダリティがありません</p>
-                <button onClick={addModality} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm">
+                <button onClick={addModality} className="btn-panel bg-blue-600 hover:bg-blue-500 text-white shadow-sm">
                   ➕ モダリティを追加
                 </button>
               </div>
@@ -189,14 +189,14 @@ export default function ModalityDB({ onBack }) {
                           <button
                             type="button"
                             onClick={() => changeStaffMode(mod.id, 'uniform')}
-                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'uniform' ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
+                            className={`btn-panel ${mod.staffMode === 'uniform' ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
                           >
                             一律
                           </button>
                           <button
                             type="button"
                             onClick={() => changeStaffMode(mod.id, 'individual')}
-                            className={`px-5 py-2.5 rounded-xl text-lg font-semibold transition-all ${mod.staffMode === 'individual' ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
+                            className={`btn-panel ${mod.staffMode === 'individual' ? 'bg-blue-600 text-white shadow-sm' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
                           >
                             曜日別
                           </button>
@@ -278,14 +278,14 @@ export default function ModalityDB({ onBack }) {
                         <button
                           type="button"
                           onClick={() => setExpandedId(null)}
-                          className="px-5 py-2.5 bg-white hover:bg-slate-100 border-2 border-slate-600 text-slate-800 rounded-xl text-lg font-semibold transition-all"
+                          className="btn-panel bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800"
                         >
                           閉じる
                         </button>
                         <button
                           type="button"
                           onClick={() => deleteModality(mod.id)}
-                          className="ml-auto px-5 py-2.5 bg-red-500 hover:bg-red-400 text-white rounded-xl text-lg font-semibold transition-all shadow-sm"
+                          className="btn-panel ml-auto bg-red-500 hover:bg-red-400 text-white shadow-sm"
                         >
                           削除
                         </button>

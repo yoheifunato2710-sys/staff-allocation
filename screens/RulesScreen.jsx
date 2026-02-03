@@ -76,10 +76,10 @@ const EXPLANATIONS = {
       <>
         <p className="text-stone-700 text-base mb-3">当番表の期間を読み込み、スコアに基づいて各モダリティへ職員を自動配置する画面です。</p>
         <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
-          <li>当番表作成でカレンダー・当番を保存した状態で利用します</li>
-          <li>「自動配置」で職員の配置スコアと当番表・休暇を考慮してモダリティ別に割り当て</li>
-          <li>「CSV」で配置表をCSV出力可能</li>
-          <li>配置結果は自動で保存されます。詳細なルールは「自動配置のルール」ボタンで確認</li>
+          <li>当番表作成でカレンダー・当番・週休を保存した状態で利用します</li>
+          <li>「配置表作成」ボタンで、職員の配置スコアと当番表・休暇を考慮してモダリティ別に割り当て</li>
+          <li>配置表の下の「週休割り当て結果」で、週休セルをドラッグ＆ドロップで別の平日に移動できます（当番表の週休ルールと同じ）</li>
+          <li>配置結果は自動で保存されます。詳細は「自動配置のルール」「配置対象外」で確認</li>
         </ul>
       </>
     )
@@ -127,15 +127,54 @@ const EXPLANATIONS = {
     )
   },
   auto: {
-    title: '自動配置のルール',
+    title: '配置表作成のルール（自動配置）',
     body: (
       <>
-        <ul className="text-stone-700 text-base space-y-2">
-          <li>平日（土日・祝日を除く）の各日について、各モダリティの必要人数をスコア1〜4の職員で満たし、その後トレーニング（5）の職員を可能な限り追加します。</li>
-          <li>必要人数はモダリティ情報入力で設定します。一律の場合は「AM○名・PM○名」、曜日別の場合は「月〜金」ごとに「AM○・PM○」を設定できます。</li>
-          <li>スコア 0 の職員はそのモダリティには配置されません。</li>
-          <li>まずスコア 4（絶対固定）を優先し、必要人数までスコア 3→2→1 の順で埋めます。トレーニング（5）は必要人数にカウントせず、余裕があれば追加で配置します。</li>
-          <li>1人の職員は1日1つのモダリティのみ配置されます。</li>
+        <p className="text-stone-700 text-base mb-2 font-semibold">【前提】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>当番表でカレンダー・当番・週休を保存した状態で「配置表作成」を実行します。</li>
+          <li>対象は平日のみ（土日・祝日は配置しません）。</li>
+          <li>各モダリティの必要人数はモダリティ情報入力で設定（一律のAM/PM名数、または曜日別のAM/PM名数）。</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【配置対象外】</p>
+        <p className="text-stone-700 text-base mb-1">その日に次のいずれかである職員は、モダリティに配置されません。</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>夜勤（16）・日勤・サポート・B・非番（当番表の割り当て。Bは外科輪番の日は「翌日の夜勤者」）</li>
+          <li>週休（当番表の週休に登録された日）</li>
+          <li>休暇・出張で登録した日</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【スコアの意味】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li><strong>0</strong> … そのモダリティには配置しない</li>
+          <li><strong>1〜4</strong> … 必要人数を満たすために使用。4（絶対固定）→3→2→1の順で優先。同率の場合はランダムで選定</li>
+          <li><strong>トレーニング（5）</strong> … 先に配置するが、必要人数にはカウントしない。余裕があれば追加で配置</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【初回配置（日付ごと・モダリティごと）】</p>
+        <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
+          <li>トレーニング（スコア5）をそのモダリティに先に配置（必要人数には含めない）</li>
+          <li>必要人数をスコア1〜4の職員で埋める。AMとPMに同じ職員を入れられる場合は同じ人を優先（パートでAM/PM未選択の場合は両方可能）</li>
+          <li>1人の職員は1日1つのモダリティのみ</li>
+        </ol>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【必要人数が満たない場合のループ】</p>
+        <p className="text-stone-700 text-base mb-1">次の①→②を、進まなくなるか不足が解消するまで繰り返します。</p>
+        <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
+          <li><strong>① 他モダリティから移動</strong> … 不足しているモダリティに、他モダリティの余剰または未配置の職員を配置</li>
+          <li><strong>② 空きに未配置を配置</strong> … ①で空いた枠に、その日の未配置職員を配置</li>
+        </ol>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【それでも不足する場合】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>週休の割り当てを自動で変更（週休を別の平日にずらす）し、再配置してから再度 ①→② のループを実行します。週休割り当ての変更は当番表のデータにも保存されます。</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【表示】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside">
+          <li>配置表の各セル内の職員名は、IDの昇順で表示されます。</li>
+          <li>不足しているセル（必要人数に満たないAM/PM）は灰色で表示されます。</li>
         </ul>
       </>
     )

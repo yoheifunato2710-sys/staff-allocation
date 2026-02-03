@@ -10,6 +10,18 @@ export default function AllocationScreen({ onBack }) {
   const [calendar, setCalendar] = useState([]);
   const [isAutoAllocating, setIsAutoAllocating] = useState(false);
 
+  const mergeScheduleWithOverrides = (schedule, manualOverrides) => {
+    const out = { ...schedule };
+    if (!manualOverrides || typeof manualOverrides !== 'object') return out;
+    for (const [dateStr, ov] of Object.entries(manualOverrides)) {
+      if (!out[dateStr]) out[dateStr] = {};
+      for (const [field, staffId] of Object.entries(ov)) {
+        if (staffId != null && staffId !== '') out[dateStr][field] = staffId;
+      }
+    }
+    return out;
+  };
+
   const allocationLoaded = useRef(false);
   useEffect(() => {
     const scheduleData = localStorage.getItem('scheduleData');
@@ -40,7 +52,7 @@ export default function AllocationScreen({ onBack }) {
     setIsAutoAllocating(true);
     const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
     const leaveData = JSON.parse(localStorage.getItem('leaveData') || '{}');
-    const schedule = scheduleData.schedule || {};
+    const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
     const weeklyOff = scheduleData.weeklyOff || {};
     const leaves = leaveData.leaveData || {};
     const newAllocation = {};
@@ -121,7 +133,7 @@ export default function AllocationScreen({ onBack }) {
   const getStaffAllocation = (staffId, date) => {
     const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
     const leaveData = JSON.parse(localStorage.getItem('leaveData') || '{}');
-    const schedule = scheduleData.schedule || {};
+    const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
     const weeklyOff = scheduleData.weeklyOff || {};
     const leaves = leaveData.leaveData || {};
     const leave = leaves[date]?.find(l => l.staffId === staffId);

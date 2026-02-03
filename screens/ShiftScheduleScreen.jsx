@@ -34,7 +34,8 @@ function getHolidays(year) {
 const SLOT_FIELDS = ['dayShift', 'support', 'nightShift', 'b', 'dayOff'];
 
 export default function ShiftScheduleScreen({ onBack }) {
-  const { staffData } = useData();
+  const { staffData: rawStaffData } = useData();
+  const staffData = Array.isArray(rawStaffData) ? rawStaffData : [];
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [calendar, setCalendar] = useState([]);
@@ -53,6 +54,45 @@ export default function ShiftScheduleScreen({ onBack }) {
   const [manualOverrides, setManualOverrides] = useState({});
   const [leftOverrides, setLeftOverrides] = useState({});
   const [pairDraft, setPairDraft] = useState({ person1: null, person2: null });
+  const [pastHistory, setPastHistory] = useState([]);
+  const [futureHistory, setFutureHistory] = useState([]);
+
+  const takeSnapshot = () => ({
+    schedule: JSON.parse(JSON.stringify(schedule)),
+    leftOverrides: JSON.parse(JSON.stringify(leftOverrides)),
+    manualOverrides: JSON.parse(JSON.stringify(manualOverrides)),
+    weeklyOff: JSON.parse(JSON.stringify(weeklyOff))
+  });
+
+  const restoreSnapshot = (snap) => {
+    setSchedule(snap.schedule);
+    setLeftOverrides(snap.leftOverrides);
+    setManualOverrides(snap.manualOverrides);
+    setWeeklyOff(snap.weeklyOff);
+  };
+
+  const handleUndo = () => {
+    if (pastHistory.length === 0) return;
+    const toRestore = pastHistory[pastHistory.length - 1];
+    const current = takeSnapshot();
+    setFutureHistory(prev => [current, ...prev]);
+    setPastHistory(prev => prev.slice(0, -1));
+    restoreSnapshot(toRestore);
+  };
+
+  const handleRedo = () => {
+    if (futureHistory.length === 0) return;
+    const toRestore = futureHistory[0];
+    const current = takeSnapshot();
+    setPastHistory(prev => [...prev, current]);
+    setFutureHistory(prev => prev.slice(1));
+    restoreSnapshot(toRestore);
+  };
+
+  const pushHistory = () => {
+    setPastHistory(prev => [...prev, takeSnapshot()]);
+    setFutureHistory([]);
+  };
 
   useEffect(() => {
     if (!startDate || !endDate) return;
@@ -82,6 +122,15 @@ export default function ShiftScheduleScreen({ onBack }) {
     }
     setCalendar(days);
   }, [startDate, endDate]);
+
+  const getOrderFromStart = (order, startId) => {
+    if (!startId || !order || order.length === 0) return order || [];
+    const idx = order.indexOf(startId);
+    if (idx <= 0) return order;
+    return [...order.slice(idx), ...order.slice(0, idx)];
+  };
+
+  const effectiveNightOrder = React.useMemo(() => getOrderFromStart(nightShiftOrder, nightShiftStartId || null), [nightShiftOrder, nightShiftStartId]);
 
   const getNextDayNightShift = (dateStr) => {
     const idx = calendar.findIndex(d => d.date === dateStr);
@@ -187,13 +236,6 @@ export default function ShiftScheduleScreen({ onBack }) {
     }
   };
 
-  const getOrderFromStart = (order, startId) => {
-    if (!startId || order.length === 0) return order;
-    const idx = order.indexOf(startId);
-    if (idx <= 0) return order;
-    return [...order.slice(idx), ...order.slice(0, idx)];
-  };
-
   const autoAssign = () => {
     if (calendar.length === 0) {
       alert('⚠️ 開始日・終了日を設定してください');
@@ -219,9 +261,10 @@ export default function ShiftScheduleScreen({ onBack }) {
         if (effectiveDay.length > 0) {
           const dayShiftPerson = effectiveDay[dayIndex % effectiveDay.length];
           newSchedule[dateStr].dayShift = dayShiftPerson;
-          const pair = pairs.find(p => p.person1 === dayShiftPerson || p.person2 === dayShiftPerson);
+          const dayShiftId = String(dayShiftPerson);
+          const pair = pairs.find(p => String(p.person1) === dayShiftId || String(p.person2) === dayShiftId);
           if (pair) {
-            newSchedule[dateStr].support = pair.person1 === dayShiftPerson ? pair.person2 : pair.person1;
+            newSchedule[dateStr].support = String(p.person1) === dayShiftId ? pair.person2 : pair.person1;
           }
           dayIndex++;
         }
@@ -442,22 +485,22 @@ export default function ShiftScheduleScreen({ onBack }) {
           </button>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-3">
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm hover:border-slate-400 transition-all">
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl">📅 期間設定</h3>
-            <div className="space-y-3">
+        <div className="grid gap-3 sm:gap-4 mb-3 grid-cols-2 lg:grid-cols-[minmax(0,200px)_1fr_1fr_minmax(0,160px)] items-stretch">
+          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all flex flex-col">
+            <h3 className="font-bold mb-3 text-stone-800 text-xl min-h-[28px] flex items-center leading-none">📅 期間設定</h3>
+            <div className="space-y-2 flex-1">
               <div>
-                <label className="block text-base mb-1.5 font-semibold text-stone-600 uppercase tracking-wider">開始日</label>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
+                <label className="block text-xs mb-1 font-semibold text-stone-600 uppercase tracking-wider">開始日</label>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 text-sm bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 focus:border-amber-400 focus:ring-1 focus:ring-amber-100 outline-none transition-all" />
               </div>
               <div>
-                <label className="block text-base mb-1.5 font-semibold text-stone-600 uppercase tracking-wider">終了日</label>
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
+                <label className="block text-xs mb-1 font-semibold text-stone-600 uppercase tracking-wider">終了日</label>
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 text-sm bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 focus:border-amber-400 focus:ring-1 focus:ring-amber-100 outline-none transition-all" />
               </div>
             </div>
           </div>
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm hover:border-slate-400 transition-all w-full">
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl">👥 順番設定</h3>
+          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm hover:border-slate-400 transition-all w-full flex flex-col">
+            <h3 className="font-bold mb-3 text-stone-800 text-xl min-h-[28px] flex items-center leading-none">👥 順番設定</h3>
             <div className="space-y-4 w-full">
               <div className="flex items-center gap-2 w-full min-h-[44px]">
                 <button onClick={() => setShowNightShiftModal(true)} className="px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-base font-semibold shadow-md transition-all shrink-0 h-[44px] flex items-center">夜勤順番 ({nightShiftOrder.length}名)</button>
@@ -488,27 +531,38 @@ export default function ShiftScheduleScreen({ onBack }) {
               <button onClick={() => setShowPairModal(true)} className="w-full px-4 py-3 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-base font-semibold shadow-md transition-all min-h-[44px] flex items-center justify-center">ペア設定 ({pairs.length}組)</button>
             </div>
           </div>
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm hover:border-slate-400 transition-all">
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl">⚙️ 実行</h3>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1 flex flex-col gap-2">
-                <button onClick={autoAssign} className="w-full px-5 py-5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-lg font-semibold shadow-md transition-all min-h-[88px] flex flex-col items-center justify-center gap-2">
-                  <span className="text-2xl" aria-hidden>🎯</span>
+          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-5 shadow-sm hover:border-slate-400 transition-all flex flex-col">
+            <h3 className="font-bold mb-3 text-stone-800 text-xl min-h-[28px] flex items-center leading-none">⚙️ 実行</h3>
+            <div className="flex flex-col gap-3">
+              <div className="flex gap-2">
+                <button onClick={() => { pushHistory(); autoAssign(); }} className="flex-1 px-4 py-4 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-base font-semibold shadow-md transition-all min-h-[80px] flex flex-col items-center justify-center gap-1">
+                  <span className="text-xl" aria-hidden>🎯</span>
                   <span>当番自動配置</span>
                 </button>
-                <button onClick={() => { setLeftOverrides({}); setManualOverrides({}); alert('✅ 変更された配置をもとに戻しました'); }} className="w-full px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-stone-700 rounded-xl text-sm font-semibold shadow-sm transition-all">
-                  変更された配置をもとに戻す
-                </button>
-              </div>
-              <div className="flex-1 flex flex-col gap-2">
-                <button onClick={autoAssignWeeklyOff} className="w-full px-5 py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-lg font-semibold shadow-md transition-all min-h-[88px] flex flex-col items-center justify-center gap-2">
-                  <span className="text-2xl" aria-hidden>📅</span>
+                <button onClick={() => { pushHistory(); autoAssignWeeklyOff(); }} className="flex-1 px-4 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-base font-semibold shadow-md transition-all min-h-[80px] flex flex-col items-center justify-center gap-1">
+                  <span className="text-xl" aria-hidden>📅</span>
                   <span>週休割り当て</span>
                 </button>
-                <button onClick={() => { setWeeklyOff({}); alert('✅ 週休割り当てをリセットしました'); }} className="w-full px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-stone-700 rounded-xl text-sm font-semibold shadow-sm transition-all">
-                  週休割り当てをリセット
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => { pushHistory(); setLeftOverrides({}); setManualOverrides({}); alert('✅ 配置をリセットしました'); }} className="flex-1 h-[40px] px-3 bg-slate-200 hover:bg-slate-300 text-stone-700 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center justify-center">
+                  配置リセット
+                </button>
+                <button onClick={() => { pushHistory(); setWeeklyOff({}); alert('✅ 週休をリセットしました'); }} className="flex-1 h-[40px] px-3 bg-slate-200 hover:bg-slate-300 text-stone-700 rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center justify-center">
+                  週休リセット
                 </button>
               </div>
+            </div>
+          </div>
+          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all flex flex-col">
+            <h3 className="font-bold mb-3 text-stone-800 text-xl min-h-[28px] flex items-center leading-none">履歴</h3>
+            <div className="flex flex-col gap-3">
+              <button onClick={handleUndo} disabled={pastHistory.length === 0} className="w-full h-[48px] px-3 py-2.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center justify-center">
+                戻る
+              </button>
+              <button onClick={handleRedo} disabled={futureHistory.length === 0} className="w-full h-[48px] px-3 py-2.5 bg-slate-500 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-semibold shadow-sm transition-all flex items-center justify-center">
+                進む
+              </button>
             </div>
           </div>
         </div>
@@ -556,6 +610,22 @@ export default function ShiftScheduleScreen({ onBack }) {
                       if (field === 'dayShift' || field === 'support') return dayShiftStaff;
                       return staffData;
                     };
+                    const effNight = manualOverrides[day.date]?.nightShift ?? leftOverrides[day.date]?.nightShift ?? daySchedule.nightShift ?? null;
+                    const effDay = manualOverrides[day.date]?.dayShift ?? leftOverrides[day.date]?.dayShift ?? daySchedule.dayShift ?? null;
+                    const effSupport = manualOverrides[day.date]?.support ?? leftOverrides[day.date]?.support ?? daySchedule.support ?? null;
+                    const effB = manualOverrides[day.date]?.b ?? leftOverrides[day.date]?.b ?? daySchedule.b ?? (isSurgery ? getNextDayNightShift(day.date) : null);
+                    const conflictNight = effNight && (effNight === effDay || effNight === effB);
+                    const conflictDay = effDay && (effNight === effDay || effDay === effB || effDay === effSupport);
+                    const conflictSupport = effSupport && effSupport === effDay;
+                    const conflictB = effB && (effNight === effB || effDay === effB);
+                    const conflictSlot = { nightShift: conflictNight, dayShift: conflictDay, support: conflictSupport, b: conflictB, dayOff: false };
+                    // サポート左セルには「日勤の左セル」に割り当てられた職員のペアを表示する（IDは文字列に正規化して比較）
+                    const dayShiftLeftValue = leftOverrides[day.date]?.dayShift ?? daySchedule.dayShift ?? null;
+                    const dayShiftLeftStr = dayShiftLeftValue != null ? String(dayShiftLeftValue) : null;
+                    const supportFromPair = dayShiftLeftStr ? (() => {
+                      const p = pairs.find(x => String(x.person1) === dayShiftLeftStr || String(x.person2) === dayShiftLeftStr);
+                      return p ? (String(p.person1) === dayShiftLeftStr ? p.person2 : p.person1) : null;
+                    })() : null;
                     return (
                       <tr key={day.date} className={`transition-all ${day.isWeekend ? 'bg-slate-50' : ''}`}>
                         <td className={`p-1 text-center text-stone-800 text-xs overflow-hidden bg-white border border-slate-400 ${hasFrame ? `border-l-2 border-t-2 border-b-2 ${frameColor}` : ''}`} style={{ minWidth: 0 }}>
@@ -564,36 +634,43 @@ export default function ShiftScheduleScreen({ onBack }) {
                         <td className={`p-1 text-center font-bold text-xs bg-white border border-slate-400 ${hasFrame ? `border-t-2 border-b-2 ${frameColor}` : ''} ${isSunSatOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</td>
                         {SLOT_FIELDS.map((field, fieldIdx) => {
                           const slotColors = { dayShift: 'bg-green-50', support: 'bg-yellow-50', nightShift: 'bg-blue-50', b: 'bg-orange-50', dayOff: 'bg-red-50' };
-                          const slotColor = slotColors[field] || '';
-                          const boxInner = 'm-0.5 rounded min-h-[20px] flex items-center justify-center bg-white/20';
+                          const isConflict = conflictSlot[field];
+                          const slotColor = isConflict ? 'bg-slate-600' : (slotColors[field] || '');
+                          const boxInner = isConflict ? 'm-0.5 rounded min-h-[20px] flex items-center justify-center bg-slate-600/80' : 'm-0.5 rounded min-h-[20px] flex items-center justify-center bg-white/20';
                           const options = staffOptions(field);
                           const isLastSlotCell = fieldIdx === SLOT_FIELDS.length - 1;
                           const rawLeftB = leftOverrides[day.date]?.b ?? schedule[day.date]?.b;
+                          const isFirstDay = calendar.length > 0 && day.date === calendar[0].date;
+                          const firstDayDayOff = isFirstDay && field === 'dayOff' && effectiveNightOrder.length > 0 ? effectiveNightOrder[effectiveNightOrder.length - 1] : null;
                           const leftValue = field === 'b' && isSurgery
                             ? (rawLeftB ?? getNextDayNightShift(day.date) ?? '')
-                            : (leftOverrides[day.date]?.[field] ?? schedule[day.date]?.[field] ?? '');
+                            : (field === 'dayOff' && isFirstDay
+                              ? (leftOverrides[day.date]?.dayOff ?? schedule[day.date]?.dayOff ?? firstDayDayOff ?? '')
+                              : (field === 'support'
+                                ? (supportFromPair ?? leftOverrides[day.date]?.support ?? schedule[day.date]?.support ?? '')
+                                : ((leftOverrides[day.date] && leftOverrides[day.date][field]) ?? (schedule[day.date] && schedule[day.date][field]) ?? ''));
                           const leftIsEdited = leftOverrides[day.date]?.[field] !== undefined;
                           const rightValue = field === 'b'
                             ? (manualOverrides[day.date]?.b ?? '')
                             : (manualOverrides[day.date]?.[field] ?? '');
                           return (
                             <React.Fragment key={field}>
-                              <td className={`p-0.5 text-center text-xs ${slotColor} overflow-hidden align-middle border border-slate-400 ${hasFrame ? `border-t-2 border-b-2 ${frameColor}` : ''} ${leftIsEdited ? 'text-red-600' : 'text-stone-800'}`} style={{ minWidth: 0 }}>
+                              <td className={`p-0.5 text-center text-xs ${slotColor} overflow-hidden align-middle border border-slate-400 ${hasFrame ? `border-t-2 border-b-2 ${frameColor}` : ''} ${isConflict ? 'text-white' : leftIsEdited ? 'text-red-600' : 'text-stone-800'}`} style={{ minWidth: 0 }}>
                                 <div className={boxInner}>
-                                  <select value={leftValue || ''} onChange={(e) => (field === 'nightShift' ? applyNightShiftLeftChange(day.date, e.target.value || null) : setLeftOverride(day.date, field, e.target.value || null))} className={`w-full min-w-0 text-xs font-bold bg-transparent border-0 py-0.5 pr-0 pl-1 focus:ring-0 focus:outline-none cursor-pointer appearance-none text-center ${leftIsEdited ? 'text-red-600' : 'text-stone-800'}`}>
+                                  <select value={leftValue || ''} onChange={(e) => (field === 'nightShift' ? applyNightShiftLeftChange(day.date, e.target.value || null) : setLeftOverride(day.date, field, e.target.value || null))} className={`w-full min-w-0 text-xs font-bold bg-transparent border-0 py-0.5 pr-0 pl-1 focus:ring-0 focus:outline-none cursor-pointer appearance-none text-center ${isConflict ? 'text-white' : leftIsEdited ? 'text-red-600' : 'text-stone-800'}`}>
                                     <option value="">－</option>
-                                    {options.map(s => (
+                                    {(field === 'support' ? staffData : options).map(s => (
                                       <option key={s.id} value={s.id}>{s.name}</option>
                                     ))}
                                   </select>
                                 </div>
                               </td>
-                              <td className={`p-0.5 align-middle overflow-hidden ${slotColor} border border-slate-400 ${hasFrame ? (isLastSlotCell ? `border-r-2 border-t-2 border-b-2 ${frameColor}` : `border-t-2 border-b-2 ${frameColor}`) : ''}`} style={{ minWidth: 0 }}>
+                              <td className={`p-0.5 align-middle overflow-hidden ${slotColor} border border-slate-400 ${hasFrame ? (isLastSlotCell ? `border-r-2 border-t-2 border-b-2 ${frameColor}` : `border-t-2 border-b-2 ${frameColor}`) : ''} ${isConflict ? 'text-white' : ''}`} style={{ minWidth: 0 }}>
                                 <div className={boxInner}>
-                                  <select value={rightValue} onChange={(e) => (field === 'nightShift' ? applyNightShiftRightChange(day.date, e.target.value || null) : setManualOverride(day.date, field, e.target.value || null))} className="w-full min-w-0 text-xs font-bold text-red-600 bg-transparent border-0 py-0.5 pr-0 pl-1 focus:ring-0 focus:outline-none cursor-pointer appearance-none text-center">
+                                  <select value={rightValue} onChange={(e) => (field === 'nightShift' ? applyNightShiftRightChange(day.date, e.target.value || null) : setManualOverride(day.date, field, e.target.value || null))} className={`w-full min-w-0 text-xs font-bold bg-transparent border-0 py-0.5 pr-0 pl-1 focus:ring-0 focus:outline-none cursor-pointer appearance-none text-center ${isConflict ? 'text-white' : 'text-red-600'}`}>
                                     <option value=""> </option>
                                     {options.map(s => (
-                                      <option key={s.id} value={s.id} className="text-red-600 font-bold">{s.name}</option>
+                                      <option key={s.id} value={s.id} className={isConflict ? 'text-white font-bold' : 'text-red-600 font-bold'}>{s.name}</option>
                                     ))}
                                   </select>
                                 </div>
@@ -753,11 +830,42 @@ export default function ShiftScheduleScreen({ onBack }) {
                 <h3 className="font-bold text-stone-800 text-2xl">ペア設定</h3>
                 <button onClick={() => { setPairDraft({ person1: null, person2: null }); setShowPairModal(false); }} className="text-stone-400 hover:text-stone-600 transition-colors text-2xl">✕</button>
               </div>
-              <p className="text-stone-600 text-sm mb-3 shrink-0">左のリストから職員をドラッグし、右の「ペアを追加」に2人ドロップするとペアになります。ドロップダウンからも追加できます。</p>
-              <div className="flex gap-4 flex-1 min-h-0 mb-4">
-                <div className="w-48 shrink-0 flex flex-col">
-                  <h4 className="font-semibold text-stone-700 text-sm mb-2">職員（ID順）</h4>
-                  <div className="flex-1 overflow-y-auto border-2 border-slate-300 rounded-xl p-2 bg-slate-100/80 space-y-1">
+              <p className="text-stone-600 text-sm mb-3 shrink-0">右の職員リストからドラッグし、左の「ペアを追加」に2人ドロップするとペアになります。</p>
+              <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
+                <div className="flex-1 flex flex-col min-w-0 overflow-hidden min-h-0">
+                  <h4 className="font-semibold text-stone-700 text-sm mb-2 shrink-0">ペアを追加（ドラッグ＆ドロップ）</h4>
+                  <div
+                    className="shrink-0 min-h-[80px] border-2 border-dashed border-orange-400 rounded-xl p-4 bg-orange-50/50 flex flex-col items-center justify-center gap-1"
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-orange-400'); }}
+                    onDragLeave={(e) => e.currentTarget.classList.remove('ring-2', 'ring-orange-400')}
+                    onDrop={handlePairDropZone}
+                  >
+                    {pairDraft.person1 ? (
+                      <span className="text-stone-700 text-sm font-medium">{staffData.find(s => s.id === pairDraft.person1)?.name || pairDraft.person1} ↔ もう1人ドロップ</span>
+                    ) : (
+                      <span className="text-stone-500 text-sm">職員を2人ドロップしてペアに</span>
+                    )}
+                  </div>
+                  <h4 className="font-semibold text-stone-700 text-sm mt-3 mb-2 shrink-0">現在のペア（{pairs.length}組）</h4>
+                  <div className="flex-1 overflow-y-auto border-2 border-slate-300 rounded-xl p-2 bg-slate-100/80 space-y-2 min-h-0">
+                    {pairs.length === 0 && (
+                      <p className="text-stone-400 text-sm py-2">まだペアがありません</p>
+                    )}
+                    {pairs.map((pair, idx) => {
+                      const staff1 = staffData.find(s => s.id === pair.person1);
+                      const staff2 = staffData.find(s => s.id === pair.person2);
+                      return (
+                        <div key={idx} className="flex justify-between items-center bg-white p-2.5 rounded-lg border border-slate-400 shadow-sm">
+                          <span className="text-stone-800 text-sm font-medium truncate">{staff1?.name || pair.person1} ↔ {staff2?.name || pair.person2}</span>
+                          <button type="button" onClick={() => setPairs(pairs.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-xs shrink-0 ml-2">削除</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="w-52 shrink-0 flex flex-col min-h-0">
+                  <h4 className="font-semibold text-stone-700 text-sm mb-2 shrink-0">職員（ID順）</h4>
+                  <div className="flex-1 overflow-y-auto border-2 border-slate-300 rounded-xl p-2 bg-slate-100/80 space-y-1 min-h-[240px]">
                     {staffSortedById.map(s => (
                       <div
                         key={s.id}
@@ -769,50 +877,6 @@ export default function ShiftScheduleScreen({ onBack }) {
                       </div>
                     ))}
                   </div>
-                </div>
-                <div className="flex-1 flex flex-col min-w-0">
-                  <h4 className="font-semibold text-stone-700 text-sm mb-2">ペアを追加（ドラッグ＆ドロップ）</h4>
-                  <div
-                    className="flex-1 min-h-[120px] border-2 border-dashed border-orange-400 rounded-xl p-4 bg-orange-50/50 flex flex-col items-center justify-center gap-2"
-                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-orange-400'); }}
-                    onDragLeave={(e) => e.currentTarget.classList.remove('ring-2', 'ring-orange-400')}
-                    onDrop={handlePairDropZone}
-                  >
-                    {pairDraft.person1 ? (
-                      <span className="text-stone-700 text-sm font-medium">{staffData.find(s => s.id === pairDraft.person1)?.name || pairDraft.person1} ↔ もう1人ドロップ</span>
-                    ) : (
-                      <span className="text-stone-500 text-sm">職員を2人ドロップしてペアに</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="mb-3 shrink-0">
-                <label className="block text-base mb-1.5 text-stone-600 font-semibold uppercase tracking-wider">ドロップダウンから追加</label>
-                <div className="flex gap-2">
-                  <select id="pair-person1" className="flex-1 p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 text-sm focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none transition-all">
-                    <option value="">-- 職員1 --</option>
-                    {staffData.map(s => (<option key={s.id} value={s.id}>{s.name}</option>))}
-                  </select>
-                  <select id="pair-person2" className="flex-1 p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-800 text-sm focus:border-orange-400 focus:ring-2 focus:ring-orange-100 outline-none transition-all">
-                    <option value="">-- 職員2 --</option>
-                    {staffData.map(s => (<option key={s.id} value={s.id}>{s.name}</option>))}
-                  </select>
-                </div>
-                <button onClick={() => { const p1 = document.getElementById('pair-person1').value; const p2 = document.getElementById('pair-person2').value; addPair(p1, p2); document.getElementById('pair-person1').value = ''; document.getElementById('pair-person2').value = ''; }} className="w-full mt-3 bg-orange-500 hover:bg-orange-400 text-white py-3 rounded-xl transition-all font-semibold shadow-sm hover:-translate-y-0.5">追加</button>
-              </div>
-              <div className="space-y-2 shrink-0">
-                <h4 className="font-bold text-sm text-stone-600 uppercase tracking-wider">現在のペア：</h4>
-                <div className="max-h-32 overflow-y-auto space-y-2">
-                  {pairs.map((pair, idx) => {
-                    const staff1 = staffData.find(s => s.id === pair.person1);
-                    const staff2 = staffData.find(s => s.id === pair.person2);
-                    return (
-                      <div key={idx} className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-400">
-                        <span className="text-stone-800">{staff1?.name || pair.person1} ↔ {staff2?.name || pair.person2}</span>
-                        <button onClick={() => setPairs(pairs.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold transition-colors">削除</button>
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
             </div>

@@ -33,7 +33,7 @@ const EXPLANATIONS = {
       <>
         <p className="text-stone-700 text-base mb-3">配置先となるモダリティ（診療科・部門など）を追加し、必要人数を設定する画面です。</p>
         <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
-          <li>左の一覧からモダリティをクリックして編集、または「追加」で新規作成</li>
+          <li>左の一覧からモダリティをクリックして編集、または「新規追加」で新規作成</li>
           <li>必要人数は「一律」（月〜金同じ）か「曜日別」（曜日ごとにAM/PMの人数）を選択</li>
           <li>一律の場合はAM○名・PM○名、曜日別の場合は月〜金それぞれにAM・PMの人数を入力</li>
           <li>入力内容は自動で保存されます</li>

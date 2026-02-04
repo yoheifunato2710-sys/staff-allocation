@@ -1,7 +1,50 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Component } from 'react';
 import { useData } from '../context/DataContext';
 
 const MAX_UNDO = 50;
+
+/** カレンダー表示部分だけを囲み、Edge 等で落ちても画面全体が消えないようにする */
+class CalendarSectionBoundary extends Component {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="bg-slate-50 rounded-2xl border-2 border-amber-300 p-6 shadow-sm">
+          <p className="text-amber-800 font-medium mb-2">カレンダー表示で問題が発生しました。</p>
+          <p className="text-stone-600 text-sm">Chrome で開くか、期間を設定し直して「カレンダーを生成」からやり直してください。</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/** レンダーで使う安全なカレンダー（date が文字列の日付だけ。保存データの不整合で落ちないようにする） */
+function useSafeCalendar(calendar) {
+  return useMemo(
+    () => (Array.isArray(calendar) ? calendar.filter((d) => d && typeof d.date === 'string') : []),
+    [calendar]
+  );
+}
+const NAV_GUARD_MS = 1200; // 表示直後の誤タップで戻るのを防ぐ（Edge 対策で App と揃えて 1.2 秒）
+
+/** 旧形式の weeklyOff（{ date: { am: [], pm: [] } }）を現形式（{ date: staffId[] }）に正規化 */
+function normalizeWeeklyOff(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const result = {};
+  for (const [dateStr, value] of Object.entries(raw)) {
+    if (Array.isArray(value)) {
+      result[dateStr] = value;
+    } else if (value && typeof value === 'object' && !Array.isArray(value) && (value.am || value.pm)) {
+      const merged = [...(value.am || []), ...(value.pm || [])];
+      result[dateStr] = [...new Set(merged)];
+    }
+  }
+  return result;
+}
 
 /** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
 function getHolidays(year) {
@@ -37,7 +80,8 @@ function getHolidays(year) {
 }
 
 export default function ShiftScheduleScreen({ onBack }) {
-  const { staffData } = useData();
+  const { staffData: rawStaffData } = useData();
+  const staffData = Array.isArray(rawStaffData) ? rawStaffData : [];
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [calendar, setCalendar] = useState([]);
@@ -60,8 +104,16 @@ export default function ShiftScheduleScreen({ onBack }) {
   const [showDayStartPicker, setShowDayStartPicker] = useState(false);
   const undoHistoryRef = useRef([]);
   const redoHistoryRef = useRef([]);
+  const [backButtonReady, setBackButtonReady] = useState(false);
   const [undoCount, setUndoCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
+
+  const safeCalendar = useSafeCalendar(calendar);
+
+  useEffect(() => {
+    const t = setTimeout(() => setBackButtonReady(true), NAV_GUARD_MS);
+    return () => clearTimeout(t);
+  }, []);
 
   const pushUndoState = () => {
     redoHistoryRef.current = [];
@@ -110,12 +162,6 @@ export default function ShiftScheduleScreen({ onBack }) {
     setRedoCount(redoHistoryRef.current.length);
   };
 
-  const resetSchedule = () => {
-    if (!window.confirm('当番表をリセットしますか？')) return;
-    pushUndoState();
-    setSchedule({});
-  };
-
   const resetWeeklyOff = () => {
     if (!window.confirm('週休自動割り当てをリセットしますか？')) return;
     pushUndoState();
@@ -162,7 +208,7 @@ export default function ShiftScheduleScreen({ onBack }) {
     setInternalMedicineDays(prev => (prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date]));
   };
 
-  const autoAssign = () => {
+  const autoAssign = (overrideNightStartId, overrideDayStartId) => {
     let cal = calendar;
     if (cal.length === 0 && startDate && endDate) {
       const start = new Date(startDate);
@@ -196,10 +242,12 @@ export default function ShiftScheduleScreen({ onBack }) {
       alert('⚠️ 夜勤順番リストを設定してください');
       return;
     }
+    const nightStart = overrideNightStartId !== undefined ? overrideNightStartId : nightShiftStartId;
+    const dayStart = overrideDayStartId !== undefined ? overrideDayStartId : dayShiftStartId;
     const newSchedule = {};
-    let nightStartIdx = nightShiftOrder.indexOf(nightShiftStartId);
+    let nightStartIdx = nightShiftOrder.indexOf(nightStart);
     if (nightStartIdx < 0) nightStartIdx = 0;
-    let dayStartIdx = dayShiftOrder.indexOf(dayShiftStartId);
+    let dayStartIdx = dayShiftOrder.indexOf(dayStart);
     if (dayStartIdx < 0) dayStartIdx = 0;
     let nightIndex = nightStartIdx;
     let dayIndex = dayStartIdx;
@@ -226,7 +274,7 @@ export default function ShiftScheduleScreen({ onBack }) {
       } else {
         // 初日: 夜勤開始者の前の夜勤者（リストは循環、1人目の前は最後、最後の次は1人目）
         if (nightShiftOrder.length > 0) {
-          const startIdx = nightShiftOrder.indexOf(nightShiftStartId) >= 0 ? nightShiftOrder.indexOf(nightShiftStartId) : 0;
+          const startIdx = nightShiftOrder.indexOf(nightStart) >= 0 ? nightShiftOrder.indexOf(nightStart) : 0;
           const prevIdx = (startIdx - 1 + nightShiftOrder.length) % nightShiftOrder.length;
           newSchedule[dateStr].dayOff = nightShiftOrder[prevIdx];
         }
@@ -251,7 +299,9 @@ export default function ShiftScheduleScreen({ onBack }) {
     });
     pushUndoState();
     setSchedule(newSchedule);
-    alert('✅ 自動配置が完了しました');
+    if (overrideNightStartId === undefined && overrideDayStartId === undefined) {
+      alert('✅ 自動配置が完了しました');
+    }
   };
 
   const autoAssignWeeklyOff = () => {
@@ -389,45 +439,69 @@ export default function ShiftScheduleScreen({ onBack }) {
   };
 
   useEffect(() => {
-    const data = { startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff };
     if (!startDate && !endDate && calendar.length === 0) return;
-    localStorage.setItem('scheduleData', JSON.stringify(data));
+    try {
+      const data = { startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff };
+      localStorage.setItem('scheduleData', JSON.stringify(data));
+    } catch (_) {
+      // 循環参照などで JSON 化に失敗しても画面は落とさない
+    }
   }, [startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff]);
 
   useEffect(() => {
-    const saved = localStorage.getItem('scheduleData');
-    if (saved) {
+    try {
+      const saved = localStorage.getItem('scheduleData');
+      if (!saved) return;
       const data = JSON.parse(saved);
-      setStartDate(data.startDate || '');
-      setEndDate(data.endDate || '');
-      const cal = data.calendar || [];
-      const migrated = cal.map(day => ({
-        ...day,
-        isHoliday: getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date)
-      }));
+      setStartDate(typeof data.startDate === 'string' ? data.startDate : '');
+      setEndDate(typeof data.endDate === 'string' ? data.endDate : '');
+      const cal = Array.isArray(data.calendar) ? data.calendar : [];
+      const migrated = cal
+        .filter((day) => day && day.date && typeof day.date === 'string')
+        .map((day) => ({
+          ...day,
+          isHoliday: getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date)
+        }));
       setCalendar(migrated);
-      setSurgeryDays(data.surgeryDays || []);
-      setInternalMedicineDays(data.internalMedicineDays || []);
-      setNightShiftOrder(data.nightShiftOrder || []);
-      setDayShiftOrder(data.dayShiftOrder || []);
+      setSurgeryDays(Array.isArray(data.surgeryDays) ? data.surgeryDays : []);
+      setInternalMedicineDays(Array.isArray(data.internalMedicineDays) ? data.internalMedicineDays : []);
+      setNightShiftOrder(Array.isArray(data.nightShiftOrder) ? data.nightShiftOrder : []);
+      setDayShiftOrder(Array.isArray(data.dayShiftOrder) ? data.dayShiftOrder : []);
       setNightShiftStartId(data.nightShiftStartId ?? null);
       setDayShiftStartId(data.dayShiftStartId ?? null);
-      setPairs(data.pairs || []);
-      setSchedule(data.schedule || {});
-      setWeeklyOff(data.weeklyOff || {});
+      setPairs(Array.isArray(data.pairs) ? data.pairs : []);
+      setSchedule(data.schedule && typeof data.schedule === 'object' && !Array.isArray(data.schedule) ? data.schedule : {});
+      setWeeklyOff(normalizeWeeklyOff(data.weeklyOff));
+    } catch (_) {
+      // 壊れた scheduleData でも画面は表示する（初期状態のまま）
     }
   }, []);
 
   return (
-    <div className="min-h-screen bg-violet-400 p-5 relative overflow-hidden">
+    <div className="min-h-screen bg-violet-400 p-5 relative">
       <div className="absolute top-20 left-20 w-96 h-96 bg-amber-200/30 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="max-w-[95vw] w-full mx-auto relative">
+      <div className="max-w-[95vw] w-full mx-auto relative min-h-0">
         <div className="flex justify-between items-center gap-4 mb-3">
           <h2 className="text-3xl font-bold text-stone-800">当番表作成</h2>
-          <button onClick={onBack} className="btn-header">
-            ← メインメニュー
-          </button>
+          <div className="relative shrink-0">
+            {!backButtonReady && (
+              <div
+                className="absolute inset-0 z-10"
+                aria-hidden
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+            )}
+            <button
+              type="button"
+              onClick={onBack}
+              disabled={!backButtonReady}
+              className={`btn-header transition-opacity ${backButtonReady ? 'opacity-100 cursor-pointer' : 'opacity-50 cursor-default'}`}
+            >
+              ← メインメニュー
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-4 mb-3 items-end">
@@ -467,9 +541,7 @@ export default function ShiftScheduleScreen({ onBack }) {
           <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
             <h3 className="font-bold mb-2 text-stone-800 text-base">⚙️ 実行</h3>
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={autoAssign} className="btn-panel bg-amber-600 hover:bg-amber-500 text-white shadow-md">🎯 当番自動配置</button>
               <button onClick={autoAssignWeeklyOff} className="btn-panel bg-indigo-600 hover:bg-indigo-500 text-white shadow-md">📅 週休自動割当</button>
-              <button onClick={resetSchedule} className="btn-panel bg-amber-400 hover:bg-amber-300 text-stone-800 border-2 border-amber-600">当番表リセット</button>
               <button onClick={resetWeeklyOff} className="btn-panel bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-2 border-indigo-600">週休割当リセット</button>
               <button onClick={undo} disabled={undoCount === 0} className="btn-panel bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600">← 戻る</button>
               <button onClick={redo} disabled={redoCount === 0} className="btn-panel bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600">進む →</button>
@@ -477,7 +549,8 @@ export default function ShiftScheduleScreen({ onBack }) {
           </div>
         </div>
 
-        {calendar.length > 0 && (
+        {safeCalendar.length > 0 && (
+          <CalendarSectionBoundary>
           <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm">
             <h3 className="font-bold mb-3 text-stone-800 text-2xl">📆 当番表カレンダー</h3>
             <div className="overflow-x-auto">
@@ -512,18 +585,19 @@ export default function ShiftScheduleScreen({ onBack }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {calendar.map((day, idx) => {
+                  {safeCalendar.map((day, idx) => {
                     const isSurgery = surgeryDays.includes(day.date);
                     const isInternalMedicine = internalMedicineDays.includes(day.date);
                     const daySchedule = schedule[day.date] || {};
-                    const nextDay = calendar[idx + 1];
-                    const prevDay = calendar[idx - 1];
+                    const nextDay = safeCalendar[idx + 1];
+                    const prevDay = safeCalendar[idx - 1];
                     const nextNight = nextDay ? (schedule[nextDay.date]?.nightShift ?? schedule[nextDay.date]?.nightShiftManual) : null;
                     const prevNight = prevDay ? (schedule[prevDay.date]?.nightShift ?? schedule[prevDay.date]?.nightShiftManual) : null;
                     const bPerson = isSurgery && nextDay ? nextNight : (daySchedule.b ?? daySchedule.bManual);
                     const dayOffPerson = prevNight ?? daySchedule.dayOff ?? daySchedule.dayOffManual;
                     const name = (id) => (id ? (staffData.find(s => s.id === id)?.name || id) : '');
-                    const isHoliday = day.isHoliday ?? getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date);
+                    const yearNum = day.date && typeof day.date === 'string' && day.date.length >= 4 ? parseInt(day.date.slice(0, 4), 10) : NaN;
+                    const isHoliday = day.isHoliday ?? (!isNaN(yearNum) && getHolidays(yearNum).has(day.date));
                     const isWeekendOrHoliday = day.isWeekend || isHoliday;
                     const rowBg = isSurgery ? 'bg-yellow-200' : (isInternalMedicine ? 'bg-pink-200' : (isWeekendOrHoliday ? 'bg-sky-50' : ''));
                     const cellBg = isWeekendOrHoliday && !isSurgery && !isInternalMedicine ? 'bg-sky-100/50' : '';
@@ -598,19 +672,20 @@ export default function ShiftScheduleScreen({ onBack }) {
             <h3 className="font-bold mb-3 text-stone-800 text-2xl mt-8">📋 週休割り当て結果</h3>
             <p className="text-sm text-stone-600 mb-2">縦＝職員（夜勤順番リスト順）、横＝日付。A＝日勤、16＝夜勤（暗ピンク）、B＝青、非番＝オレンジ、黄色＝週休または土日祝で勤務なし。</p>
             <div className="overflow-x-auto border border-slate-400 rounded-xl">
-              <table className="w-full border-collapse text-sm table-fixed" style={{ minWidth: `${calendar.length * 2.5 + 9}rem` }}>
+              <table className="w-full border-collapse text-sm table-fixed" style={{ minWidth: `${safeCalendar.length * 2.5 + 9}rem` }}>
                 <colgroup>
                   <col style={{ width: '9rem', minWidth: '9rem' }} />
                 </colgroup>
                 <thead>
                   <tr className="border-b border-slate-400 bg-slate-100">
                     <th className="sticky left-0 z-10 w-[9rem] min-w-[9rem] px-2 py-2 text-left text-stone-600 font-semibold bg-slate-100 border-r border-slate-400">職員</th>
-                    {calendar.map((day) => {
-                      const isHoliday = getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date);
+                    {safeCalendar.map((day) => {
+                      const y = day.date && day.date.length >= 4 ? parseInt(day.date.slice(0, 4), 10) : NaN;
+                      const isHoliday = !isNaN(y) && getHolidays(y).has(day.date);
                       const isWeekendOrHoliday = day.isWeekend || isHoliday;
                       return (
                         <th key={day.date} className="px-0.5 py-1 text-center text-stone-600 font-medium border-r border-slate-300 min-w-[2.5rem]">
-                          <span className="block text-xs text-stone-500">{day.date.slice(5)}</span>
+                          <span className="block text-xs text-stone-500">{day.date.slice ? day.date.slice(5) : ''}</span>
                           <span className={`font-bold ${isWeekendOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</span>
                         </th>
                       );
@@ -622,10 +697,10 @@ export default function ShiftScheduleScreen({ onBack }) {
                     const staff = staffData.find(s => s.id === staffId);
                     if (!staff) return null;
                     let weeklyOffDays = 0;
-                    calendar.forEach((day, idx) => {
+                    safeCalendar.forEach((day, idx) => {
                       const dateStr = day.date;
                       const daySchedule = schedule[dateStr] || {};
-                      const nextDay = calendar[idx + 1];
+                      const nextDay = safeCalendar[idx + 1];
                       const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift ?? schedule[nextDay.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
                       const onNight = daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId;
                       const onDay = daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId;
@@ -641,14 +716,15 @@ export default function ShiftScheduleScreen({ onBack }) {
                     return (
                       <tr key={staffId} className="border-b border-slate-300">
                         <td className="sticky left-0 z-10 w-[9rem] min-w-[9rem] px-2 py-1 text-stone-800 font-medium bg-slate-50 border-r border-slate-400 whitespace-nowrap overflow-visible">{staff.name} <span className="text-stone-500 font-normal">({weeklyOffDays})</span></td>
-                        {calendar.map((day, idx) => {
+                        {safeCalendar.map((day, idx) => {
                           const dateStr = day.date;
                           const daySchedule = schedule[dateStr] || {};
-                          const nextDay = calendar[idx + 1];
-                          const prevDay = calendar[idx - 1];
+                          const nextDay = safeCalendar[idx + 1];
+                          const prevDay = safeCalendar[idx - 1];
                           const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift) : (daySchedule.b);
-                          const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShift) : null;
-                          const isHoliday = getHolidays(parseInt(day.date.slice(0, 4), 10)).has(day.date);
+                          const dayOffPerson = prevDay && prevDay.date ? (schedule[prevDay.date]?.nightShift) : null;
+                          const y = dateStr && dateStr.length >= 4 ? parseInt(dateStr.slice(0, 4), 10) : NaN;
+                          const isHoliday = !isNaN(y) && getHolidays(y).has(dateStr);
                           const isWeekendOrHoliday = day.isWeekend || isHoliday;
                           let label = '';
                           let cellClass = 'px-0.5 py-1 text-center border-r border-slate-200';
@@ -727,6 +803,7 @@ export default function ShiftScheduleScreen({ onBack }) {
               <p className="text-stone-600 mt-2">※土日祝で勤務が当たっていない日は黄色で表示しますが、付与する週休の日数には含めません。</p>
             </div>
           </div>
+          </CalendarSectionBoundary>
         )}
 
         {manualPicker && (() => {
@@ -786,7 +863,7 @@ export default function ShiftScheduleScreen({ onBack }) {
                   const staff = staffData.find(s => s.id === id);
                   const isStart = nightShiftStartId === id;
                   return (
-                    <button key={id} type="button" onClick={() => { setNightShiftStartId(id); setShowNightStartPicker(false); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-blue-500 border-blue-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-blue-50'}`}>
+                    <button key={id} type="button" onClick={() => { setNightShiftStartId(id); setShowNightStartPicker(false); autoAssign(id, dayShiftStartId); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-blue-500 border-blue-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-blue-50'}`}>
                       {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
                     </button>
                   );
@@ -807,7 +884,7 @@ export default function ShiftScheduleScreen({ onBack }) {
                   const staff = staffData.find(s => s.id === id);
                   const isStart = dayShiftStartId === id;
                   return (
-                    <button key={id} type="button" onClick={() => { setDayShiftStartId(id); setShowDayStartPicker(false); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-emerald-50'}`}>
+                    <button key={id} type="button" onClick={() => { setDayShiftStartId(id); setShowDayStartPicker(false); autoAssign(nightShiftStartId, id); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-emerald-50'}`}>
                       {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
                     </button>
                   );

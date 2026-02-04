@@ -94,10 +94,10 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
 
       <div className="relative flex flex-col flex-1 min-h-0 w-full min-w-0 max-w-full">
         <div className="flex justify-between items-center mb-4 shrink-0">
-          <h2 className="text-3xl font-bold text-stone-800">職員情報入力</h2>
+          <h2 className="text-3xl font-bold text-stone-800">職員情報登録</h2>
           <div className="flex items-center gap-2">
-            <button onClick={openNewForm} className="btn-panel bg-emerald-600 hover:bg-emerald-500 text-white shadow-md">
-              ➕ 新規登録
+            <button onClick={openNewForm} className="btn-add">
+              ➕ 新規追加
             </button>
             <button onClick={onBack} className="btn-header">
               ← メインメニュー
@@ -111,8 +111,8 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
             {staffData.length === 0 ? (
               <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-8 text-center shadow-md">
                 <p className="text-stone-700 text-xl mb-5">まだ職員が登録されていません</p>
-                <button onClick={openNewForm} className="btn-panel bg-emerald-600 hover:bg-emerald-500 text-white shadow-md">
-                  ➕ 新規登録
+                <button onClick={openNewForm} className="btn-add">
+                  ➕ 新規追加
                 </button>
               </div>
             ) : (
@@ -145,7 +145,7 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
           <div ref={rightPanelRef} className="flex-1 min-w-0 overflow-auto flex flex-col">
             {showForm ? (
               <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-6 shadow-md flex-1 overflow-y-auto">
-                <h3 className="text-2xl font-bold text-stone-800 mb-5">{editingStaff ? `編集: ${editingStaff.name}` : '新規登録'}</h3>
+                <h3 className="text-2xl font-bold text-stone-800 mb-5">{editingStaff ? `編集: ${editingStaff.name}` : '新規追加'}</h3>
                 <div className="space-y-5 max-w-3xl">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -203,7 +203,7 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-3 pt-3 items-center">
-                    <button type="button" onClick={handleSubmit} className="btn-panel bg-emerald-500 hover:bg-emerald-400 text-white shadow-sm">
+                    <button type="button" onClick={handleSubmit} className="btn-add">
                       登録
                     </button>
                     <button type="button" onClick={handleCancel} className="btn-panel bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800">
@@ -223,7 +223,7 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
               </div>
             ) : (
               <div className="bg-slate-50/80 rounded-xl border-2 border-dashed border-slate-300 p-8 flex items-center justify-center min-h-[280px]">
-                <p className="text-stone-600 text-xl">左の一覧から職員をクリックして編集するか、新規登録をクリックしてください</p>
+                <p className="text-stone-600 text-xl">左の一覧から職員をクリックして編集するか、新規追加をクリックしてください</p>
               </div>
             )}
           </div>

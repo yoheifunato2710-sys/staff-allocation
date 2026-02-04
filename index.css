@@ -18,4 +18,8 @@ body {
   .btn-panel {
     @apply min-h-[40px] inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-semibold transition-all;
   }
+  /* 新規追加・登録などメインアクション（色・影を統一） */
+  .btn-add {
+    @apply btn-panel bg-emerald-600 hover:bg-emerald-500 text-white shadow-md;
+  }
 }

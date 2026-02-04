@@ -214,18 +214,18 @@ export default function LeaveInputScreen({ onBack }) {
   }, [staffData, staffLeaveCounts]);
 
   return (
-    <div className="min-h-screen bg-violet-400 p-5 relative overflow-hidden">
+    <div className="min-h-screen bg-violet-400 p-5 relative overflow-hidden flex flex-col">
       <div className="absolute bottom-20 left-20 w-96 h-96 bg-rose-200/30 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="relative w-full max-w-full">
-        <div className="flex justify-between items-center gap-4 mb-4">
+      <div className="relative flex flex-col flex-1 min-h-0 w-full max-w-full">
+        <div className="flex justify-between items-center gap-4 mb-4 shrink-0">
           <h2 className="text-3xl font-bold text-stone-800">休暇・出張管理</h2>
           <button onClick={onBack} className="btn-header">
             ← メインメニュー
           </button>
         </div>
 
-        <div className="flex gap-6 items-start">
+        <div className="flex gap-6 flex-1 min-h-0 items-stretch">
           {/* 左: 職員一覧（全員）＋ 年休・リフ休の年間総カウント（1/1〜12/31） */}
           <div className="w-[520px] shrink-0 flex flex-col">
             <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-4 shadow-md">
@@ -249,46 +249,46 @@ export default function LeaveInputScreen({ onBack }) {
             </div>
           </div>
 
-          {/* 右: カレンダー（大きく表示） */}
-          <div className="flex-1 min-w-0 flex flex-col items-start">
-            <div className="bg-slate-50/95 backdrop-blur-sm rounded-2xl border-2 border-slate-400 p-6 shadow-sm w-full max-w-[1200px]">
-              <div className="flex items-center justify-center gap-4 mb-4 shrink-0">
+          {/* 右: カレンダー（メインメニューと同じ大きさ） */}
+          <div className="flex-1 min-w-0 flex flex-col min-h-0">
+            <div className="bg-slate-50/95 backdrop-blur-sm rounded-2xl border-2 border-slate-400 shadow-sm p-4 flex-1 flex flex-col min-h-0">
+              <div className="flex items-center justify-center gap-3 mb-3 shrink-0">
                 <button
                   type="button"
                   onClick={() => changeMonth(-1)}
-                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-400 text-stone-600 hover:text-stone-800 transition-all shrink-0"
+                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-400 text-stone-600 hover:text-stone-800 transition-all shrink-0"
                   aria-label="前月"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                   </svg>
                 </button>
-                <h2 className="text-2xl font-bold text-stone-900 min-w-[140px] text-center">
+                <h2 className="text-xl font-bold text-stone-900 min-w-[120px] text-center">
                   {currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月
                 </h2>
                 <button
                   type="button"
                   onClick={() => changeMonth(1)}
-                  className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-400 text-stone-600 hover:text-stone-800 transition-all shrink-0"
+                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border-2 border-slate-400 text-stone-600 hover:text-stone-800 transition-all shrink-0"
                   aria-label="次月"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
               </div>
-              <div className="grid grid-cols-7 gap-3" onMouseUp={handleDateMouseUp} onMouseLeave={() => setIsSelecting(false)}>
+              <div className="grid grid-cols-7 gap-2 flex-1 min-h-0 auto-rows-fr" onMouseUp={handleDateMouseUp} onMouseLeave={() => setIsSelecting(false)}>
                 {['日', '月', '火', '水', '木', '金', '土'].map((day, i) => (
                   <div
                     key={day}
-                    className={`text-center text-lg font-semibold py-2.5 ${i === 0 ? 'text-red-600' : i === 6 ? 'text-blue-700' : 'text-stone-600'}`}
+                    className={`text-center text-sm font-semibold py-1 ${i === 0 ? 'text-red-600' : i === 6 ? 'text-blue-700' : 'text-stone-600'}`}
                   >
                     {day}
                   </div>
                 ))}
                 {monthCalendar.map((day, idx) => {
                   if (!day) {
-                    return <div key={`empty-${idx}`} className="min-h-[140px]" />;
+                    return <div key={`empty-${idx}`} className="min-h-[88px]" />;
                   }
                   const isSelected = selectedDates.includes(day.date);
                   const dayLeaves = leaveData[day.date] || [];
@@ -304,17 +304,17 @@ export default function LeaveInputScreen({ onBack }) {
                       tabIndex={0}
                       onMouseDown={() => handleDateMouseDown(day.date)}
                       onMouseEnter={() => handleDateMouseEnter(day.date)}
-                      className={`min-h-[140px] p-4 rounded-xl border-2 cursor-pointer transition-all select-none flex flex-col text-left ${cellBg}`}
+                      className={`min-h-[88px] p-2 rounded-lg border-2 cursor-pointer transition-all select-none flex flex-col text-left ${cellBg}`}
                     >
-                      <span className={`text-2xl font-bold ${dateColor} shrink-0`}>{day.day}</span>
-                      <div className="mt-2 space-y-1 flex-1 min-h-0 overflow-hidden">
+                      <span className={`text-lg font-bold ${dateColor} shrink-0`}>{day.day}</span>
+                      <div className="mt-0.5 space-y-0.5 flex-1 min-h-0 overflow-hidden">
                         {dayLeaves.map((leave, leaveIdx) => {
                           const staff = staffData.find(s => s.id === leave.staffId);
                           return (
                             <div
                               key={leaveIdx}
                               onClick={(e) => e.stopPropagation()}
-                              className={`text-sm px-2 py-1 rounded leading-tight truncate max-w-full ${colorMap[leave.leaveType] || 'bg-stone-200 text-stone-800'}`}
+                              className={`text-xs px-1.5 py-0.5 rounded leading-tight truncate max-w-full ${colorMap[leave.leaveType] || 'bg-stone-200 text-stone-800'}`}
                               title={`${staff?.name || leave.staffId} (${leave.leaveType}) — 日付をクリックで編集`}
                             >
                               {staff?.name || leave.staffId} ({leave.leaveType})
@@ -326,7 +326,7 @@ export default function LeaveInputScreen({ onBack }) {
                   );
                 })}
               </div>
-              <p className="text-stone-700 text-base mt-3 shrink-0 font-medium">日付をクリックでその日の登録を表示・編集。ドラッグで範囲選択して新規登録</p>
+              <p className="text-stone-700 text-sm mt-2 shrink-0 font-medium">日付をクリックでその日の登録を表示・編集。ドラッグで範囲選択して新規追加</p>
             </div>
           </div>
         </div>
@@ -355,7 +355,7 @@ export default function LeaveInputScreen({ onBack }) {
                   </select>
                 </div>
                 <div className="flex gap-2 pt-2">
-                  <button onClick={addLeave} className="btn-panel flex-1 bg-rose-500 hover:bg-rose-400 text-white shadow-sm">✓ 登録</button>
+                  <button onClick={addLeave} className="btn-add flex-1">✓ 登録</button>
                   <button onClick={() => { setShowLeaveModal(false); setSelectedDates([]); }} className="btn-panel flex-1 bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800">キャンセル</button>
                 </div>
               </div>
@@ -399,7 +399,7 @@ export default function LeaveInputScreen({ onBack }) {
                 )}
               </div>
               <div className="flex gap-2 shrink-0 pt-2 border-t border-slate-200">
-                <button onClick={() => addLeaveForSingleDate(selectedDateForDetail)} className="btn-panel flex-1 bg-rose-500 hover:bg-rose-400 text-white shadow-sm">＋ この日に追加</button>
+                <button onClick={() => addLeaveForSingleDate(selectedDateForDetail)} className="btn-add flex-1">＋ この日に追加</button>
                 <button onClick={() => setSelectedDateForDetail(null)} className="btn-panel bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800">閉じる</button>
               </div>
             </div>

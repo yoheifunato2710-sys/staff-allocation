@@ -3,6 +3,7 @@ import MenuButton from '../components/MenuButton';
 
 const STORAGE_KEY = 'mainMenuCalendarComments';
 const STORAGE_KEY_MONTHLY = 'mainMenuMonthlyComments';
+const LEAVE_TYPES = ['週休', '年休', 'リフ休', '特別休', '出張'];
 
 function getBackupFilename() {
   const d = new Date();
@@ -79,6 +80,66 @@ function restoreFromBackup(file, onDone) {
   reader.readAsText(file, 'UTF-8');
 }
 
+/** weeklyOff の旧形式（{ date: { am: [], pm: [] } }）を現形式（{ date: staffId[] }）に正規化 */
+function normalizeWeeklyOff(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const result = {};
+  for (const [dateStr, value] of Object.entries(raw)) {
+    if (Array.isArray(value)) {
+      result[dateStr] = value;
+    } else if (value && typeof value === 'object' && !Array.isArray(value) && (value.am || value.pm)) {
+      const merged = [...(value.am || []), ...(value.pm || [])];
+      result[dateStr] = [...new Set(merged)];
+    }
+  }
+  return result;
+}
+
+/** バックアップファイルを読み、weeklyOff を修正してダウンロード */
+function downloadFixedBackup(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const backup = JSON.parse(reader.result);
+      if (backup.scheduleData && backup.scheduleData.weeklyOff) {
+        backup.scheduleData.weeklyOff = normalizeWeeklyOff(backup.scheduleData.weeklyOff);
+      }
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const base = (file.name && file.name.endsWith('.json')) ? file.name.slice(0, -5) : 'backup-fixed';
+      a.href = url;
+      a.download = `${base}-fixed.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      alert('修正したバックアップをダウンロードしました');
+    } catch (e) {
+      alert('ファイルの読み込みまたは修正に失敗しました');
+    }
+  };
+  reader.onerror = () => alert('ファイルの読み込みに失敗しました');
+  reader.readAsText(file, 'UTF-8');
+}
+
+/** 全データをリセット（職員・モダリティ・当番表・休暇・配置表・コメントを削除） */
+function resetAllData() {
+  const msg = 'すべてのデータ（職員・モダリティ・当番表・休暇・配置表・カレンダーコメント）を削除してリセットします。\n元に戻せません。よろしいですか？';
+  if (!window.confirm(msg)) return;
+  try {
+    localStorage.removeItem('modalityData');
+    localStorage.removeItem('staffData');
+    localStorage.removeItem('scheduleData');
+    localStorage.removeItem('leaveData');
+    localStorage.removeItem('allocationData');
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY_MONTHLY);
+    alert('データをリセットしました。画面を再読み込みします。');
+    window.location.reload();
+  } catch (e) {
+    alert('リセットに失敗しました');
+  }
+}
+
 /** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
 function getHolidays(year) {
   const pad = (n) => String(n).padStart(2, '0');
@@ -145,10 +206,70 @@ export default function MainMenu({ onNavigate }) {
   const [selectedDate, setSelectedDate] = useState(null);
   const [editComment, setEditComment] = useState('');
   const [monthlyComments, setMonthlyComments] = useState({});
+  const [leaveData, setLeaveData] = useState({});
+  const [showAddLeaveForm, setShowAddLeaveForm] = useState(false);
+  const [addLeaveStaff, setAddLeaveStaff] = useState('');
+  const [addLeaveType, setAddLeaveType] = useState('');
   const editCommentRef = useRef('');
   const commentsRef = useRef({});
   const textareaRef = useRef(null);
   const restoreInputRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('leaveData');
+      if (raw) {
+        const data = JSON.parse(raw);
+        setLeaveData(data.leaveData || {});
+      }
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    if (selectedDate === null) return;
+    try {
+      const raw = localStorage.getItem('leaveData');
+      if (raw) {
+        const data = JSON.parse(raw);
+        setLeaveData(data.leaveData || {});
+      }
+    } catch (_) {}
+  }, [selectedDate]);
+
+  const saveLeaveData = (next) => {
+    try {
+      localStorage.setItem('leaveData', JSON.stringify({ leaveData: next }));
+    } catch (_) {}
+  };
+
+  const addLeaveForDate = (dateStr, staffId, leaveType) => {
+    const next = { ...leaveData };
+    if (!next[dateStr]) next[dateStr] = [];
+    if (next[dateStr].some((item) => item.staffId === staffId)) return;
+    next[dateStr] = [...next[dateStr], { staffId, leaveType }];
+    setLeaveData(next);
+    saveLeaveData(next);
+  };
+
+  const removeLeaveForDate = (dateStr, staffId) => {
+    if (!confirm('削除しますか？')) return;
+    const next = { ...leaveData };
+    next[dateStr] = (next[dateStr] || []).filter((item) => item.staffId !== staffId);
+    if (next[dateStr].length === 0) delete next[dateStr];
+    setLeaveData(next);
+    saveLeaveData(next);
+  };
+
+  const updateLeaveTypeForDate = (dateStr, staffId, newLeaveType) => {
+    const next = { ...leaveData };
+    if (!next[dateStr]) return;
+    const idx = next[dateStr].findIndex((item) => item.staffId === staffId);
+    if (idx === -1) return;
+    next[dateStr] = [...next[dateStr]];
+    next[dateStr][idx] = { ...next[dateStr][idx], leaveType: newLeaveType };
+    setLeaveData(next);
+    saveLeaveData(next);
+  };
 
   useEffect(() => {
     try {
@@ -283,6 +404,9 @@ export default function MainMenu({ onNavigate }) {
   };
 
   const closeComment = (overrideValue) => {
+    setShowAddLeaveForm(false);
+    setAddLeaveStaff('');
+    setAddLeaveType('');
     const dateToSave = selectedDate;
     if (dateToSave === null) {
       setSelectedDate(null);
@@ -352,12 +476,12 @@ export default function MainMenu({ onNavigate }) {
       <div className="relative flex flex-col gap-0 w-full max-w-6xl mx-auto flex-1 min-h-0">
         {/* 左：ボタン / 右：カレンダー */}
         <div className="flex gap-6 w-full items-stretch flex-1 min-h-0">
-          <div className="shrink-0 w-[420px] flex flex-col min-h-0 bg-slate-50 rounded-2xl border-2 border-slate-400 shadow-sm p-2">
-            <div className="flex-1 flex flex-col gap-1.5 min-h-0 min-w-0">
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="📝" title="職員情報入力" detail="職員の登録・編集、各モダリティの配置スコア（0〜4）を設定" onClick={() => onNavigate('staff-db')} accent="violet" />
+          <div className="relative z-10 shrink-0 w-[420px] flex flex-col min-h-0 bg-slate-50 rounded-2xl border-2 border-slate-400 shadow-sm p-2">
+            <div className="flex-1 flex flex-col gap-1.5 min-h-0 min-w-0 overflow-y-auto">
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="📝" title="職員情報登録" detail="職員の登録・編集、各モダリティの配置スコア（0〜4）を設定" onClick={() => onNavigate('staff-db')} accent="violet" />
               <MenuButton compact className="flex-1 min-h-[72px]" icon="⚙️" title="モダリティ情報入力" detail="配置先モダリティの追加、必要人数（一律または曜日別）の設定" onClick={() => onNavigate('modality-db')} accent="cyan" />
               <MenuButton compact className="flex-1 min-h-[72px]" icon="🏖️" title="休暇・出張入力" detail="休暇・出張の日付と職員を登録し、カレンダーに反映" onClick={() => onNavigate('leave-input')} accent="rose" />
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="🗓️" title="当番表作成" detail="期間を設定し、夜勤・日勤・週休の順番・ペアを割り当てて保存" onClick={() => onNavigate('shift-schedule')} accent="amber" />
+              <MenuButton compact className="flex-1 min-h-[72px]" icon="🗓️" title="当番表作成" detail="期間を設定し、夜勤・日勤・週休の順番・ペアを割り当てて保存" onClick={() => onNavigate('shift-schedule')} onPointerDown={() => onNavigate('shift-schedule')} accent="amber" />
               <MenuButton compact className="flex-1 min-h-[72px]" icon="📊" title="配置表作成" detail="当番表を読み込み、スコアに基づいて自動配置。保存・CSV出力" onClick={() => onNavigate('allocation')} accent="indigo" />
               <MenuButton compact className="flex-1 min-h-[72px]" icon="📜" title="ルール" detail="使い方の流れ、配置スコア・配置対象外・自動配置のルール確認" onClick={() => onNavigate('rules')} accent="emerald" />
               <input
@@ -389,6 +513,14 @@ export default function MainMenu({ onNavigate }) {
                   >
                     <span className="shrink-0 text-lg">📥</span>
                     <span>ファイルからデータを復元</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetAllData}
+                    className="pl-3 pr-3 py-2 bg-rose-50 hover:bg-rose-100 border-2 border-rose-400 rounded-xl text-rose-800 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                  >
+                    <span className="shrink-0 text-lg">🗑️</span>
+                    <span>全データをリセット</span>
                   </button>
                 </div>
               </div>
@@ -491,12 +623,6 @@ export default function MainMenu({ onNavigate }) {
             return raw ? JSON.parse(raw) : null;
           } catch (_) { return null; }
         })();
-        const leaveData = (() => {
-          try {
-            const raw = localStorage.getItem('leaveData');
-            return raw ? JSON.parse(raw) : null;
-          } catch (_) { return null; }
-        })();
         const modalityData = (() => {
           try {
             const raw = localStorage.getItem('modalityData');
@@ -513,7 +639,7 @@ export default function MainMenu({ onNavigate }) {
         const manualOverrides = scheduleData?.manualOverrides || {};
         const weeklyOff = scheduleData?.weeklyOff || {};
         const surgeryDays = scheduleData?.surgeryDays || [];
-        const leaves = leaveData?.leaveData || {};
+        const dayLeavesList = leaveData[dateStr] || [];
         const allocation = allocationData?.allocation || {};
         const mergeSched = (d) => {
           const s = schedule[d] || {};
@@ -539,7 +665,7 @@ export default function MainMenu({ onNavigate }) {
         const leaveInfo = {
           dayOffId: daySched.dayOff ?? daySched.dayOffManual,
           weeklyOffIds: weeklyOff[dateStr] || [],
-          dayLeaves: leaves[dateStr] || []
+          dayLeaves: dayLeavesList
         };
         const manualStaff = allocation[dateStr]?._manualStaff || [];
 
@@ -563,38 +689,133 @@ export default function MainMenu({ onNavigate }) {
                   {renderAllocationTable(dateStr, allocation, modalityData, staffData, name, manualStaff, scheduleRow, leaveInfo)}
                 </div>
 
-                {/* 右：コメント */}
-                <form
-                  className="flex-1 min-w-0 flex flex-col border border-slate-300 rounded-xl bg-white p-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    closeComment();
-                  }}
-                >
-                  <label className="text-stone-700 font-semibold text-sm mb-2 shrink-0">コメント・メモ</label>
-                  <textarea
-                    ref={textareaRef}
-                    value={editComment}
-                    onChange={handleEditChange}
-                    placeholder="メモを入力..."
-                    className="w-full flex-1 min-h-[120px] p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-900 text-base font-medium placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-none"
-                  />
-                  <div className="flex gap-2 mt-3 shrink-0">
-                    <button
-                      type="submit"
-                      className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-lg font-semibold transition-all shadow-sm"
-                    >
-                      OK
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => closeComment('')}
-                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-lg font-medium transition-all"
-                    >
-                      クリア
-                    </button>
+                {/* 右：コメント ＋ 休暇・出張 */}
+                <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
+                  <form
+                    className="flex flex-col min-h-0 border border-slate-300 rounded-xl bg-white p-3"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      closeComment();
+                    }}
+                  >
+                    <label className="text-stone-700 font-semibold text-sm mb-2 shrink-0">コメント・メモ</label>
+                    <textarea
+                      ref={textareaRef}
+                      value={editComment}
+                      onChange={handleEditChange}
+                      placeholder="メモを入力..."
+                      className="w-full flex-1 min-h-[100px] p-3 bg-slate-50 border-2 border-slate-400 rounded-xl text-stone-900 text-base font-medium placeholder-stone-600 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none resize-none"
+                    />
+                    <div className="flex gap-2 mt-3 shrink-0">
+                      <button
+                        type="submit"
+                        className="btn-add flex-1 py-2.5 rounded-xl text-lg font-semibold"
+                      >
+                        OK
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => closeComment('')}
+                        className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-lg font-medium transition-all"
+                      >
+                        クリア
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="flex flex-col min-h-0 border border-slate-300 rounded-xl bg-white p-3 shrink-0">
+                    <label className="text-stone-700 font-semibold text-sm mb-2 shrink-0">休暇・出張</label>
+                    <div className="flex-1 min-h-0 overflow-y-auto space-y-2 mb-3">
+                      {dayLeavesList.length === 0 ? (
+                        <p className="text-stone-500 text-sm">この日は登録がありません</p>
+                      ) : (
+                        dayLeavesList.map((leave, leaveIdx) => {
+                          const staff = staffData.find((s) => s.id === leave.staffId);
+                          return (
+                            <div key={leaveIdx} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
+                              <span className="font-medium text-stone-800 text-sm min-w-[100px] truncate">{staff?.name || leave.staffId}</span>
+                              <select
+                                value={leave.leaveType}
+                                onChange={(e) => updateLeaveTypeForDate(dateStr, leave.staffId, e.target.value)}
+                                className="flex-1 min-w-0 p-1.5 text-sm bg-white border border-slate-400 rounded-lg text-stone-800 focus:border-rose-400 outline-none"
+                              >
+                                {LEAVE_TYPES.map((type) => (
+                                  <option key={type} value={type}>{type}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => removeLeaveForDate(dateStr, leave.staffId)}
+                                className="shrink-0 px-2 py-1 text-sm rounded-lg bg-red-100 text-red-700 hover:bg-red-200 font-medium"
+                              >
+                                削除
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                    {showAddLeaveForm ? (
+                      <div className="space-y-2 p-2 bg-rose-50/50 rounded-lg border border-rose-200">
+                        <div className="flex gap-2 flex-wrap items-center">
+                          <select
+                            value={addLeaveStaff}
+                            onChange={(e) => setAddLeaveStaff(e.target.value)}
+                            className="flex-1 min-w-[120px] p-2 text-sm bg-white border-2 border-slate-400 rounded-lg text-stone-800 focus:border-rose-400 outline-none"
+                          >
+                            <option value="">職員を選択</option>
+                            {staffData.map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={addLeaveType}
+                            onChange={(e) => setAddLeaveType(e.target.value)}
+                            className="flex-1 min-w-[100px] p-2 text-sm bg-white border-2 border-slate-400 rounded-lg text-stone-800 focus:border-rose-400 outline-none"
+                          >
+                            <option value="">種類</option>
+                            {LEAVE_TYPES.map((type) => (
+                              <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (addLeaveStaff && addLeaveType) {
+                                addLeaveForDate(dateStr, addLeaveStaff, addLeaveType);
+                                setAddLeaveStaff('');
+                                setAddLeaveType('');
+                                setShowAddLeaveForm(false);
+                              } else {
+                                alert('⚠️ 職員と種類を選択してください');
+                              }
+                            }}
+                            className="btn-add flex-1 text-sm py-2"
+                          >
+                            登録
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setShowAddLeaveForm(false); setAddLeaveStaff(''); setAddLeaveType(''); }}
+                            className="btn-panel bg-white border-2 border-slate-600 text-stone-800 text-sm py-2"
+                          >
+                            キャンセル
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddLeaveForm(true)}
+                        className="btn-add w-full text-sm py-2"
+                      >
+                        ＋ この日に追加
+                      </button>
+                    )}
                   </div>
-                </form>
+                </div>
               </div>
             </div>
           </div>

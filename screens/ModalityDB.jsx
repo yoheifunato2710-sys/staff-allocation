@@ -21,6 +21,8 @@ function getSimplifiedInfo(mod) {
 export default function ModalityDB({ onBack }) {
   const { modalityData, setModalityData } = useData();
   const [expandedId, setExpandedId] = useState(null);
+  const [dragFromIndex, setDragFromIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
 
   const addModality = () => {
     const newId = modalityData.length > 0
@@ -76,16 +78,42 @@ export default function ModalityDB({ onBack }) {
     setModalityData(prev => prev.map(m => m.id === id ? { ...m, note } : m));
   };
 
-  const moveModality = (id, direction) => {
-    const idx = modalityData.findIndex(m => m.id === id);
-    if (idx < 0) return;
-    const newIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (newIdx < 0 || newIdx >= modalityData.length) return;
+  const moveModalityToIndex = (fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
     setModalityData(prev => {
       const arr = [...prev];
-      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      const [item] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, item);
       return arr;
     });
+  };
+
+  const handleDragStart = (e, index) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+    e.dataTransfer.setDragImage(e.currentTarget, 0, 0);
+    setDragFromIndex(index);
+  };
+
+  const handleDragOver = (e, index) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  };
+
+  const handleDrop = (e, toIdx) => {
+    e.preventDefault();
+    const fromIdx = dragFromIndex;
+    if (fromIdx !== null && fromIdx !== toIdx) {
+      moveModalityToIndex(fromIdx, toIdx);
+    }
+    setDragFromIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragFromIndex(null);
+    setDragOverIndex(null);
   };
 
   return (
@@ -96,8 +124,8 @@ export default function ModalityDB({ onBack }) {
         <div className="flex justify-between items-center mb-4 shrink-0">
           <h2 className="text-3xl font-bold text-stone-800">モダリティ情報入力</h2>
           <div className="flex items-center gap-2">
-            <button onClick={addModality} className="btn-panel bg-blue-600 hover:bg-blue-500 text-white shadow-sm">
-              ➕ 追加
+            <button onClick={addModality} className="btn-add">
+              ➕ 新規追加
             </button>
             <button onClick={onBack} className="btn-header">
               ← メインメニュー
@@ -111,50 +139,43 @@ export default function ModalityDB({ onBack }) {
             {modalityData.length === 0 ? (
               <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-8 text-center shadow-md">
                 <p className="text-stone-700 text-xl mb-5">モダリティがありません</p>
-                <button onClick={addModality} className="btn-panel bg-blue-600 hover:bg-blue-500 text-white shadow-sm">
-                  ➕ モダリティを追加
+                <button onClick={addModality} className="btn-add">
+                  ➕ 新規追加
                 </button>
               </div>
             ) : (
-              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-2 pr-1">
+              <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1 pr-1">
                 {modalityData.map((mod, index) => (
                   <div
                     key={mod.id}
-                    className={`rounded-xl border-2 overflow-hidden shadow-md cursor-pointer transition-all ${
-                      expandedId === mod.id
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, index)}
+                    onDragOver={(e) => handleDragOver(e, index)}
+                    onDrop={(e) => handleDrop(e, index)}
+                    onDragEnd={handleDragEnd}
+                    className={`rounded-lg border-2 overflow-hidden shadow-sm cursor-grab active:cursor-grabbing transition-all ${
+                      dragFromIndex === index ? 'opacity-50' : ''
+                    } ${
+                      expandedId === mod.id && dragOverIndex !== index
                         ? 'border-blue-500 bg-blue-50/80 ring-2 ring-blue-200'
                         : 'border-slate-400 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-500'
+                    } ${
+                      dragOverIndex === index ? 'ring-2 ring-emerald-400 border-emerald-400 bg-emerald-50/80' : ''
                     }`}
                     onClick={() => setExpandedId(mod.id)}
                   >
-                    <div className="flex items-center gap-2 px-3 py-3">
+                    <div className="flex items-center gap-1.5 px-2 py-1.5">
                       <div
-                        className="flex flex-col shrink-0 gap-0.5"
+                        className="flex items-center shrink-0 gap-0 text-slate-400 cursor-grab active:cursor-grabbing"
                         onClick={(e) => e.stopPropagation()}
+                        title="ドラッグで順序変更"
                       >
-                        <button
-                          type="button"
-                          onClick={() => moveModality(mod.id, 'up')}
-                          disabled={index === 0}
-                          className="p-1 rounded text-slate-600 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-                          title="上へ"
-                        >
-                          ▲
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveModality(mod.id, 'down')}
-                          disabled={index === modalityData.length - 1}
-                          className="p-1 rounded text-slate-600 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-                          title="下へ"
-                        >
-                          ▼
-                        </button>
+                        <span className="text-base leading-none select-none">⋮⋮</span>
                       </div>
-                      <span className="text-stone-700 text-lg font-semibold w-7 shrink-0">{index + 1}</span>
-                      <span className="flex-1 min-w-0 font-semibold text-stone-900 text-lg truncate">{mod.name || '（未入力）'}</span>
-                      <span className="text-stone-600 text-base shrink-0">{getSimplifiedInfo(mod)}</span>
-                      {mod.note ? <span className="text-stone-500 text-base shrink-0" title={mod.note}>📝</span> : null}
+                      <span className="text-stone-700 text-sm font-semibold w-5 shrink-0">{index + 1}</span>
+                      <span className="flex-1 min-w-0 font-semibold text-stone-900 text-base truncate">{mod.name || '（未入力）'}</span>
+                      <span className="text-stone-600 text-xs shrink-0">{getSimplifiedInfo(mod)}</span>
+                      {mod.note ? <span className="text-stone-500 text-xs shrink-0" title={mod.note}>📝</span> : null}
                     </div>
                   </div>
                 ))}

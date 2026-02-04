@@ -10,18 +10,22 @@ export function DataProvider({ children }) {
   const staffLoaded = useRef(false);
 
   const loadModalityData = () => {
-    const saved = localStorage.getItem('modalityData');
-    if (saved) {
-      setModalityData(JSON.parse(saved));
-    } else {
+    try {
+      const saved = localStorage.getItem('modalityData');
+      const parsed = saved ? JSON.parse(saved) : null;
+      setModalityData(Array.isArray(parsed) ? parsed : []);
+    } catch (_) {
       setModalityData([]);
     }
   };
 
   const loadStaffData = () => {
-    const saved = localStorage.getItem('staffData');
-    if (saved) {
-      setStaffData(JSON.parse(saved));
+    try {
+      const saved = localStorage.getItem('staffData');
+      const parsed = saved ? JSON.parse(saved) : null;
+      setStaffData(Array.isArray(parsed) ? parsed : []);
+    } catch (_) {
+      setStaffData([]);
     }
   };
 

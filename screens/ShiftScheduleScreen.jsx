@@ -104,9 +104,13 @@ export default function ShiftScheduleScreen({ onBack }) {
   const [showDayStartPicker, setShowDayStartPicker] = useState(false);
   const undoHistoryRef = useRef([]);
   const redoHistoryRef = useRef([]);
+  const weeklyOffUndoHistoryRef = useRef([]);
+  const weeklyOffRedoHistoryRef = useRef([]);
   const [backButtonReady, setBackButtonReady] = useState(false);
   const [undoCount, setUndoCount] = useState(0);
   const [redoCount, setRedoCount] = useState(0);
+  const [weeklyOffUndoCount, setWeeklyOffUndoCount] = useState(0);
+  const [weeklyOffRedoCount, setWeeklyOffRedoCount] = useState(0);
 
   const safeCalendar = useSafeCalendar(calendar);
 
@@ -162,9 +166,35 @@ export default function ShiftScheduleScreen({ onBack }) {
     setRedoCount(redoHistoryRef.current.length);
   };
 
+  const pushWeeklyOffUndoState = () => {
+    weeklyOffRedoHistoryRef.current = [];
+    setWeeklyOffRedoCount(0);
+    weeklyOffUndoHistoryRef.current.push(JSON.parse(JSON.stringify(weeklyOff)));
+    if (weeklyOffUndoHistoryRef.current.length > MAX_UNDO) weeklyOffUndoHistoryRef.current.shift();
+    setWeeklyOffUndoCount(weeklyOffUndoHistoryRef.current.length);
+  };
+
+  const undoWeeklyOff = () => {
+    if (weeklyOffUndoHistoryRef.current.length === 0) return;
+    weeklyOffRedoHistoryRef.current.push(JSON.parse(JSON.stringify(weeklyOff)));
+    setWeeklyOffRedoCount(weeklyOffRedoHistoryRef.current.length);
+    const prev = weeklyOffUndoHistoryRef.current.pop();
+    setWeeklyOff(prev);
+    setWeeklyOffUndoCount(weeklyOffUndoHistoryRef.current.length);
+  };
+
+  const redoWeeklyOff = () => {
+    if (weeklyOffRedoHistoryRef.current.length === 0) return;
+    weeklyOffUndoHistoryRef.current.push(JSON.parse(JSON.stringify(weeklyOff)));
+    setWeeklyOffUndoCount(weeklyOffUndoHistoryRef.current.length);
+    const next = weeklyOffRedoHistoryRef.current.pop();
+    setWeeklyOff(next);
+    setWeeklyOffRedoCount(weeklyOffRedoHistoryRef.current.length);
+  };
+
   const resetWeeklyOff = () => {
     if (!window.confirm('週休自動割り当てをリセットしますか？')) return;
-    pushUndoState();
+    pushWeeklyOffUndoState();
     setWeeklyOff({});
   };
 
@@ -368,7 +398,7 @@ export default function ShiftScheduleScreen({ onBack }) {
         }
       }
     });
-    pushUndoState();
+    pushWeeklyOffUndoState();
     setWeeklyOff(newWeeklyOff);
     alert('✅ 週休を自動割り当てしました');
   };
@@ -402,6 +432,7 @@ export default function ShiftScheduleScreen({ onBack }) {
       (daySchedule.b ?? bPerson) === staffId || daySchedule.bManual === staffId ||
       (daySchedule.dayOff ?? dayOffPerson) === staffId || daySchedule.dayOffManual === staffId;
     if (hasOtherLeave || isAssigned) return;
+    pushWeeklyOffUndoState();
     setWeeklyOff(prev => {
       const next = { ...prev };
       if (next[fromDate]) next[fromDate] = next[fromDate].filter(id => id !== staffId);
@@ -413,6 +444,7 @@ export default function ShiftScheduleScreen({ onBack }) {
   };
 
   const toggleWeeklyOff = (date, staffId) => {
+    pushWeeklyOffUndoState();
     setWeeklyOff(prev => {
       const newData = { ...prev };
       if (!newData[date]) newData[date] = [];
@@ -477,6 +509,14 @@ export default function ShiftScheduleScreen({ onBack }) {
     }
   }, []);
 
+  const leaveData = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('leaveData') || '{}').leaveData || {};
+    } catch {
+      return {};
+    }
+  })();
+
   return (
     <div className="min-h-screen bg-violet-400 p-5 relative">
       <div className="absolute top-20 left-20 w-96 h-96 bg-amber-200/30 rounded-full blur-3xl pointer-events-none" />
@@ -504,47 +544,50 @@ export default function ShiftScheduleScreen({ onBack }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-3 items-end">
+        <div className="flex flex-wrap gap-4 mb-3 items-stretch">
+          {/* 期間設定: 開始日・終了日を横並び */}
           <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
             <h3 className="font-bold mb-2 text-stone-800 text-lg">📅 期間設定</h3>
-            <div className="space-y-2">
-              <div>
-                <label className="block text-sm mb-1 font-semibold text-stone-600 uppercase tracking-wider">開始日</label>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
+            <div className="flex gap-4 items-end">
+              <div className="flex-1 min-w-0">
+                <label className="block text-base mb-1 font-semibold text-stone-600 uppercase tracking-wider">開始日</label>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-base focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
               </div>
-              <div>
-                <label className="block text-sm mb-1 font-semibold text-stone-600 uppercase tracking-wider">終了日</label>
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
+              <div className="flex-1 min-w-0">
+                <label className="block text-base mb-1 font-semibold text-stone-600 uppercase tracking-wider">終了日</label>
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-base focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
               </div>
             </div>
           </div>
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
+
+          {/* 順番設定: 夜勤｜日勤｜ペア(2列)｜週休割当リセット(2列)｜進む・戻る */}
+          <div className="flex-1 min-w-[32rem] bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
             <h3 className="font-bold mb-2 text-stone-800 text-lg">👥 順番設定</h3>
-            <div className="space-y-2">
-              <div className="flex gap-2 items-center">
-                <button onClick={() => setShowNightShiftModal(true)} className="btn-panel flex-1 bg-blue-600 hover:bg-blue-500 text-white shadow-md">夜勤順番 ({nightShiftOrder.length}名)</button>
-                <button onClick={() => setShowNightStartPicker(true)} className="min-h-[32px] py-1.5 px-2.5 rounded text-xs font-semibold bg-blue-500 hover:bg-blue-400 text-white border border-blue-600 shrink-0">開始者</button>
-                <span className="text-stone-700 text-sm font-medium truncate min-w-0 max-w-[8rem]" title={nightShiftStartId ? (staffData.find(s => s.id === nightShiftStartId)?.name || nightShiftStartId) : ''}>
-                  {nightShiftStartId ? (staffData.find(s => s.id === nightShiftStartId)?.name || nightShiftStartId) : '－'}
-                </span>
+            <div className="grid gap-2 items-end" style={{ gridTemplateColumns: '1fr 1fr minmax(6rem, 0.7fr) minmax(6rem, 0.7fr) auto' }}>
+              <div className="flex flex-col gap-1 w-full min-w-0">
+                <button onClick={() => setShowNightShiftModal(true)} className="btn-panel min-h-[52px] w-full bg-blue-600 hover:bg-blue-500 text-white shadow-md text-base">夜勤順番 ({nightShiftOrder.length}名)</button>
+                <button onClick={() => setShowNightStartPicker(true)} className="w-full min-h-[52px] py-2 pl-6 pr-2 rounded-lg text-base font-semibold bg-blue-500 hover:bg-blue-400 text-white border-2 border-blue-600 flex items-center gap-2">
+                  <span className="shrink-0">開始者</span>
+                  <span className="truncate min-w-0 flex-1 py-0.5 px-1.5 rounded border border-blue-700/50 bg-white/90 text-stone-900 text-center text-base" title={nightShiftStartId ? (staffData.find(s => s.id === nightShiftStartId)?.name || nightShiftStartId) : ''}>
+                    {nightShiftStartId ? (staffData.find(s => s.id === nightShiftStartId)?.name || nightShiftStartId) : '－'}
+                  </span>
+                </button>
               </div>
-              <div className="flex gap-2 items-center">
-                <button onClick={() => setShowDayShiftModal(true)} className="btn-panel flex-1 bg-emerald-600 hover:bg-emerald-500 text-white shadow-md">日勤順番 ({dayShiftOrder.length}名)</button>
-                <button onClick={() => setShowDayStartPicker(true)} className="min-h-[32px] py-1.5 px-2.5 rounded text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-white border border-emerald-600 shrink-0">開始者</button>
-                <span className="text-stone-700 text-sm font-medium truncate min-w-0 max-w-[8rem]" title={dayShiftStartId ? (staffData.find(s => s.id === dayShiftStartId)?.name || dayShiftStartId) : ''}>
-                  {dayShiftStartId ? (staffData.find(s => s.id === dayShiftStartId)?.name || dayShiftStartId) : '－'}
-                </span>
+              <div className="flex flex-col gap-1 w-full min-w-0">
+                <button onClick={() => setShowDayShiftModal(true)} className="btn-panel min-h-[52px] w-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-md text-base">日勤順番 ({dayShiftOrder.length}名)</button>
+                <button onClick={() => setShowDayStartPicker(true)} className="w-full min-h-[52px] py-2 pl-6 pr-2 rounded-lg text-base font-semibold bg-emerald-500 hover:bg-emerald-400 text-white border-2 border-emerald-600 flex items-center gap-2">
+                  <span className="shrink-0">開始者</span>
+                  <span className="truncate min-w-0 flex-1 py-0.5 px-1.5 rounded border border-emerald-700/50 bg-white/90 text-stone-900 text-center text-base" title={dayShiftStartId ? (staffData.find(s => s.id === dayShiftStartId)?.name || dayShiftStartId) : ''}>
+                    {dayShiftStartId ? (staffData.find(s => s.id === dayShiftStartId)?.name || dayShiftStartId) : '－'}
+                  </span>
+                </button>
               </div>
-              <button onClick={() => setShowPairModal(true)} className="btn-panel w-full bg-orange-600 hover:bg-orange-500 text-white shadow-md">ペア設定 ({pairs.length}組)</button>
-            </div>
-          </div>
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
-            <h3 className="font-bold mb-2 text-stone-800 text-base">⚙️ 実行</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={autoAssignWeeklyOff} className="btn-panel bg-indigo-600 hover:bg-indigo-500 text-white shadow-md">📅 週休自動割当</button>
-              <button onClick={resetWeeklyOff} className="btn-panel bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-2 border-indigo-600">週休割当リセット</button>
-              <button onClick={undo} disabled={undoCount === 0} className="btn-panel bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600">← 戻る</button>
-              <button onClick={redo} disabled={redoCount === 0} className="btn-panel bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600">進む →</button>
+              <button onClick={() => setShowPairModal(true)} className="btn-panel min-h-[104px] w-full bg-orange-600 hover:bg-orange-500 text-white shadow-md text-lg">ペア設定 ({pairs.length}組)</button>
+              <button onClick={resetWeeklyOff} className="btn-panel min-h-[104px] w-full bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-2 border-indigo-600 text-lg">週休割当リセット</button>
+              <div className="flex gap-2">
+                <button onClick={redo} disabled={redoCount === 0} className="btn-panel min-h-[52px] px-4 bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600 text-base">進む →</button>
+                <button onClick={undo} disabled={undoCount === 0} className="btn-panel min-h-[52px] px-4 bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600 text-base">← 戻る</button>
+              </div>
             </div>
           </div>
         </div>
@@ -669,8 +712,13 @@ export default function ShiftScheduleScreen({ onBack }) {
             </div>
             <div className="mt-3 text-base text-stone-600">※日勤・サポート・夜勤・B・非番は1列目＝自動、2列目＝手動変更（自動で人が入っている隣のボックスをクリックで職員選択）。土日祝は曜日を赤表示し、祝日にも日勤・サポートを自動割当します。外科輪番・内科輪番はボタンで指定。Bは外科輪番の日に翌日夜勤、非番は前日夜勤の担当者を自動表示します。<br />配置表作成では<strong>1列目（左・自動）を優先</strong>して参照し、1列目が空のときだけ2列目（右・手動）を参照します。</div>
 
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl mt-8">📋 週休割り当て結果</h3>
-            <p className="text-sm text-stone-600 mb-2">縦＝職員（夜勤順番リスト順）、横＝日付。A＝日勤、16＝夜勤（暗ピンク）、B＝青、非番＝オレンジ、黄色＝週休または土日祝で勤務なし。</p>
+            <div className="mt-8">
+            <div className="flex flex-wrap items-center gap-3 mb-3">
+              <h3 className="font-bold text-stone-800 text-2xl">📋 週休割り当て結果</h3>
+              <button onClick={autoAssignWeeklyOff} className="btn-panel min-h-[52px] px-4 bg-indigo-600 hover:bg-indigo-500 text-white shadow-md text-base">📅 週休自動割当</button>
+              <button onClick={redoWeeklyOff} disabled={weeklyOffRedoCount === 0} className="btn-panel min-h-[52px] px-4 bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600 text-base">進む →</button>
+              <button onClick={undoWeeklyOff} disabled={weeklyOffUndoCount === 0} className="btn-panel min-h-[52px] px-4 bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600 text-base">← 戻る</button>
+            </div>
             <div className="overflow-x-auto border border-slate-400 rounded-xl">
               <table className="w-full border-collapse text-sm table-fixed" style={{ minWidth: `${safeCalendar.length * 2.5 + 9}rem` }}>
                 <colgroup>
@@ -749,6 +797,17 @@ export default function ShiftScheduleScreen({ onBack }) {
                           } else if (isWeekendOrHoliday) {
                             label = '';
                             cellClass += ' bg-yellow-300 text-stone-800';
+                          } else {
+                            const dayLeaves = (leaveData[dateStr] || []).filter(l => l.staffId === staffId);
+                            const leaveEntry = dayLeaves.find(l => ['年休', 'リフ休', '特別休', '出張'].includes(l.leaveType)) || dayLeaves[0];
+                            if (leaveEntry) {
+                              label = leaveEntry.leaveType;
+                              if (leaveEntry.leaveType === '年休' || leaveEntry.leaveType === 'リフ休') cellClass += ' bg-stone-300 text-stone-800';
+                              else if (leaveEntry.leaveType === '特別休') cellClass += ' bg-amber-100 text-stone-800';
+                              else if (leaveEntry.leaveType === '出張') cellClass += ' bg-pink-100 text-stone-800';
+                              else if (leaveEntry.leaveType === '週休') cellClass += ' bg-violet-100 text-stone-800';
+                              else cellClass += ' bg-stone-200 text-stone-800';
+                            }
                           }
                           const isWeeklyOffCell = weeklyOff[dateStr]?.includes(staffId);
                           const handleDrop = (e) => {
@@ -779,28 +838,6 @@ export default function ShiftScheduleScreen({ onBack }) {
                 </tbody>
               </table>
             </div>
-            <div className="mt-4 p-4 bg-slate-100/80 rounded-xl border border-slate-300 text-stone-700 text-sm space-y-2">
-              <h4 className="font-bold text-stone-800 text-base">週休を割り当てるルール</h4>
-              <p className="font-semibold text-stone-700">【付与する週休の日数】</p>
-              <ul className="list-disc list-inside ml-2 space-y-0.5">
-                <li>金曜の夜勤 … +1日</li>
-                <li>土曜の夜勤 … +2日</li>
-                <li>土曜の日勤・サポート … +1日</li>
-                <li>日曜の日勤・サポート … +1日</li>
-                <li>日曜の夜勤 … +1日</li>
-                <li>土日のB … +1日</li>
-              </ul>
-              <p className="font-semibold text-stone-700 mt-2">【割り当て先】</p>
-              <ul className="list-disc list-inside ml-2 space-y-0.5">
-                <li>平日のみ（土日祝は割り当て先にしない）</li>
-                <li>期間全体でバランスをとり、1日あたりの週休人数が偏らないように割り当てる（配置表で必要人数を満たしやすくするため。不足する場合は週休の割り当てを変更して調整）</li>
-              </ul>
-              <p className="font-semibold text-stone-700 mt-2">【週休を割り当てない日】</p>
-              <ul className="list-disc list-inside ml-2 space-y-0.5">
-                <li>その日に休暇入力がある日</li>
-                <li>その日に当番表で勤務が入っている日（日勤・サポート・夜勤・B・非番のいずれか。手動変更も含む）</li>
-              </ul>
-              <p className="text-stone-600 mt-2">※土日祝で勤務が当たっていない日は黄色で表示しますが、付与する週休の日数には含めません。</p>
             </div>
           </div>
           </CalendarSectionBoundary>

@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '../context/DataContext';
 
+const AUTO_SAVE_DELAY_MS = 400;
+
 export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editingStaff, setEditingStaff }) {
   const { modalityData, staffData, setStaffData } = useData();
   const [formData, setFormData] = useState({ id: '', name: '', years: '', position: '', scores: {}, isPartTime: false, partTimeSlot: 'am_pm' });
   const leftListRef = useRef(null);
   const rightPanelRef = useRef(null);
   const scrollToSyncRef = useRef(null);
+  const autoSaveTimerRef = useRef(null);
 
   useEffect(() => {
     if (editingStaff) {
@@ -15,6 +18,20 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
       resetForm();
     }
   }, [editingStaff]);
+
+  // 編集中は変更を自動保存（登録ボタン不要）
+  useEffect(() => {
+    if (!editingStaff) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      if (!formData.id?.trim() || !formData.name?.trim() || !formData.years) return;
+      const idAlreadyUsed = staffData.some(s => s.id === formData.id && s.id !== editingStaff.id);
+      if (idAlreadyUsed) return;
+      setStaffData(prev => prev.map(s => (s.id === editingStaff.id ? { ...formData } : s)));
+    }, AUTO_SAVE_DELAY_MS);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [formData, editingStaff]);
 
   // 職員をクリックして編集を開いたとき、右パネルを左リストのスクロール位置に合わせる
   useEffect(() => {
@@ -144,35 +161,35 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
           {/* 右: 編集パネル */}
           <div ref={rightPanelRef} className="flex-1 min-w-0 overflow-auto flex flex-col">
             {showForm ? (
-              <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-6 shadow-md flex-1 overflow-y-auto">
-                <h3 className="text-2xl font-bold text-stone-800 mb-5">{editingStaff ? `編集: ${editingStaff.name}` : '新規追加'}</h3>
-                <div className="space-y-5 max-w-3xl">
-                  <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-50 rounded-xl border-2 border-slate-400 p-3 shadow-md flex-1 overflow-y-auto">
+                <h3 className="text-lg font-bold text-stone-800 mb-2">{editingStaff ? `編集: ${staffData.find(s => s.id === editingStaff.id)?.name ?? editingStaff.name ?? formData.name}` : '新規追加'}</h3>
+                <div className="space-y-2 max-w-3xl">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block mb-2 font-semibold text-stone-800 text-base uppercase tracking-wider">職員ID *</label>
-                      <input type="text" value={formData.id} onChange={(e) => setFormData({ ...formData, id: e.target.value })} className="w-full p-3 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg placeholder-stone-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none transition-all" placeholder="例: 001" />
+                      <label className="block mb-0.5 font-semibold text-stone-800 text-xs uppercase tracking-wider">職員ID *</label>
+                      <input type="text" value={formData.id} onChange={(e) => setFormData({ ...formData, id: e.target.value })} className="w-full py-1.5 px-2 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-sm placeholder-stone-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-100 outline-none transition-all" placeholder="例: 001" />
                     </div>
                     <div className="col-span-2">
-                      <label className="block mb-2 font-semibold text-stone-800 text-base uppercase tracking-wider">氏名 *</label>
-                      <div className="flex items-center gap-4 flex-wrap">
-                        <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="flex-1 min-w-[200px] p-3 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg placeholder-stone-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none transition-all" placeholder="例: 山田太郎" />
-                        <label className="flex items-center gap-2 cursor-pointer shrink-0">
-                          <input type="checkbox" checked={formData.isPartTime ?? false} onChange={(e) => setFormData({ ...formData, isPartTime: e.target.checked, partTimeSlot: e.target.checked ? (formData.partTimeSlot ?? 'am_pm') : 'am_pm' })} className="w-5 h-5 rounded border-2 border-slate-400 text-violet-600 focus:ring-violet-400" />
-                          <span className="text-stone-800 text-base font-medium">パート</span>
+                      <label className="block mb-0.5 font-semibold text-stone-800 text-xs uppercase tracking-wider">氏名 *</label>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="flex-1 min-w-[160px] py-1.5 px-2 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-sm placeholder-stone-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-100 outline-none transition-all" placeholder="例: 山田太郎" />
+                        <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                          <input type="checkbox" checked={formData.isPartTime ?? false} onChange={(e) => setFormData({ ...formData, isPartTime: e.target.checked, partTimeSlot: e.target.checked ? (formData.partTimeSlot ?? 'am_pm') : 'am_pm' })} className="w-4 h-4 rounded border-2 border-slate-400 text-violet-600 focus:ring-violet-400" />
+                          <span className="text-stone-800 text-sm font-medium">パート</span>
                         </label>
                       </div>
                       {(formData.isPartTime ?? false) && (
-                        <div className="mt-3 flex items-center gap-4">
-                          <span className="text-stone-800 text-base font-medium shrink-0">勤務可能時間帯</span>
-                          <div className="flex items-center gap-4 flex-wrap">
+                        <div className="mt-1 flex items-center gap-3">
+                          <span className="text-stone-800 text-sm font-medium shrink-0">勤務可能時間帯</span>
+                          <div className="flex items-center gap-3 flex-wrap">
                             {[
                               { value: 'am', label: 'AM' },
                               { value: 'pm', label: 'PM' },
                               { value: 'am_pm', label: 'AM＆PM' }
                             ].map(({ value, label }) => (
-                              <label key={value} className="flex items-center gap-2 cursor-pointer">
-                                <input type="radio" name="partTimeSlot" value={value} checked={(formData.partTimeSlot ?? 'am_pm') === value} onChange={() => setFormData({ ...formData, partTimeSlot: value })} className="w-4 h-4 text-violet-600 focus:ring-violet-400" />
-                                <span className="text-stone-800 text-base">{label}</span>
+                              <label key={value} className="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" name="partTimeSlot" value={value} checked={(formData.partTimeSlot ?? 'am_pm') === value} onChange={() => setFormData({ ...formData, partTimeSlot: value })} className="w-3.5 h-3.5 text-violet-600 focus:ring-violet-400" />
+                                <span className="text-stone-800 text-sm">{label}</span>
                               </label>
                             ))}
                           </div>
@@ -180,40 +197,43 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
                       )}
                     </div>
                     <div>
-                      <label className="block mb-2 font-semibold text-stone-800 text-base uppercase tracking-wider">入職年数 *</label>
-                      <input type="number" value={formData.years} onChange={(e) => setFormData({ ...formData, years: e.target.value })} className="w-full p-3 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg placeholder-stone-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none transition-all" placeholder="例: 2019" min="1900" max="2100" />
+                      <label className="block mb-0.5 font-semibold text-stone-800 text-xs uppercase tracking-wider">入職年数 *</label>
+                      <input type="number" value={formData.years} onChange={(e) => setFormData({ ...formData, years: e.target.value })} className="w-full py-1.5 px-2 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-sm placeholder-stone-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-100 outline-none transition-all" placeholder="例: 2019" min="1900" max="2100" />
                     </div>
                     <div>
-                      <label className="block mb-2 font-semibold text-stone-800 text-base uppercase tracking-wider">役職</label>
-                      <input type="text" value={formData.position} onChange={(e) => setFormData({ ...formData, position: e.target.value })} className="w-full p-3 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-lg placeholder-stone-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none transition-all" placeholder="例: 主任" />
+                      <label className="block mb-0.5 font-semibold text-stone-800 text-xs uppercase tracking-wider">役職</label>
+                      <input type="text" value={formData.position} onChange={(e) => setFormData({ ...formData, position: e.target.value })} className="w-full py-1.5 px-2 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-sm placeholder-stone-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-100 outline-none transition-all" placeholder="例: 主任" />
                     </div>
                   </div>
                   <div>
-                    <label className="block mb-2 font-semibold text-stone-800 text-base uppercase tracking-wider">モダリティ別配置スコア（0-4・トレーニング）</label>
-                    <div className="bg-violet-50 border border-violet-200 px-3 py-2 rounded-xl mb-3 text-base text-violet-800">0:適正なし | 1:優先度低 | 2:優先度中 | 3:優先度高 | 4:絶対固定 | 5:トレーニング（配置するが必要人数に含めない）</div>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                    <label className="block mb-0.5 font-semibold text-stone-800 text-xs uppercase tracking-wider">モダリティ別配置スコア（0-4・トレーニング）</label>
+                    <div className="bg-violet-50 border border-violet-200 px-2 py-1 rounded-lg mb-1 text-xs text-violet-800">0:適正なし | 1:優先度低 | 2:優先度中 | 3:優先度高 | 4:絶対固定 | 5:トレーニング（配置するが必要人数に含めない）</div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                       {modalityData.map((mod, idx) => (
-                        <div key={mod.id} className="flex items-center justify-between bg-white border-2 border-slate-400 py-3 px-4 rounded-xl gap-4 min-w-0">
-                          <span className="text-stone-800 text-base font-medium truncate min-w-0">{idx + 1}. {mod.name}</span>
-                          <select value={formData.scores[mod.id] ?? 0} onChange={(e) => setFormData({ ...formData, scores: { ...formData.scores, [mod.id]: parseInt(e.target.value, 10) } })} className="w-40 min-w-[10rem] py-2 px-3 bg-white border-2 border-slate-400 rounded-xl text-stone-900 text-base font-semibold focus:border-violet-400 outline-none shrink-0">
+                        <div key={mod.id} className="flex items-center justify-between bg-white border-2 border-slate-400 py-1.5 px-2 rounded-lg gap-2 min-w-0">
+                          <span className="text-stone-800 text-sm font-medium truncate min-w-0">{idx + 1}. {mod.name}</span>
+                          <select value={formData.scores[mod.id] ?? 0} onChange={(e) => setFormData({ ...formData, scores: { ...formData.scores, [mod.id]: parseInt(e.target.value, 10) } })} className="w-32 min-w-[5rem] py-1 px-2 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-sm font-semibold focus:border-violet-400 outline-none shrink-0">
                             <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">トレーニング</option>
                           </select>
                         </div>
                       ))}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-3 pt-3 items-center">
-                    <button type="button" onClick={handleSubmit} className="btn-add">
-                      登録
-                    </button>
-                    <button type="button" onClick={handleCancel} className="btn-panel bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800">
+                  <div className="flex flex-wrap gap-2 pt-1.5 items-center">
+                    {!editingStaff && (
+                      <button type="button" onClick={handleSubmit} className="btn-add text-sm py-1.5 px-3">
+                        登録
+                      </button>
+                    )}
+                    {editingStaff && <span className="text-stone-500 text-xs">編集中は自動保存されます</span>}
+                    <button type="button" onClick={handleCancel} className="btn-panel text-sm py-1.5 px-3 bg-white hover:bg-slate-100 border-2 border-slate-600 text-stone-800">
                       閉じる
                     </button>
                     {editingStaff && (
                       <button
                         type="button"
                         onClick={() => deleteStaff(editingStaff.id)}
-                        className="btn-panel ml-auto bg-red-500 hover:bg-red-400 text-white shadow-sm"
+                        className="btn-panel text-sm py-1.5 px-3 ml-auto bg-red-500 hover:bg-red-400 text-white shadow-sm"
                       >
                         削除
                       </button>

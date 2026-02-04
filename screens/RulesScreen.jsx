@@ -9,7 +9,8 @@ const MENU_ITEMS = [
   { id: 'backup', label: 'バックアップ・復元', icon: '📦' },
   { id: 'score', label: '配置スコア', icon: '⚙️' },
   { id: 'exclude', label: '配置対象外', icon: '📅' },
-  { id: 'auto', label: '自動配置のルール', icon: '✓' }
+  { id: 'auto', label: '自動配置のルール', icon: '✓' },
+  { id: 'allocationLogic', label: '配置表作成のロジック', icon: '📐' }
 ];
 
 const EXPLANATIONS = {
@@ -78,8 +79,9 @@ const EXPLANATIONS = {
         <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
           <li>当番表作成でカレンダー・当番・週休を保存した状態で利用します</li>
           <li>「配置表作成」ボタンで、職員の配置スコアと当番表・休暇を考慮してモダリティ別に割り当て</li>
+          <li>未配置は AM 用・PM 用で別表示。パートで AM のみ・PM のみの職員は、勤務可能な時間帯の未配置にのみ表示されます</li>
           <li>配置表の下の「週休割り当て結果」で、週休セルをドラッグ＆ドロップで別の平日に移動できます（当番表の週休ルールと同じ）</li>
-          <li>配置結果は自動で保存されます。詳細は「自動配置のルール」「配置対象外」で確認</li>
+          <li>配置結果は自動で保存されます。詳細は「自動配置のルール」「配置表作成のロジック」で確認</li>
         </ul>
       </>
     )
@@ -145,36 +147,89 @@ const EXPLANATIONS = {
           <li>休暇・出張で登録した日</li>
         </ul>
 
+        <p className="text-stone-700 text-base mb-2 font-semibold">【パートのAM/PM】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>パートで「AMのみ」「PMのみ」を指定した職員は、その時間帯にのみ配置可能です。もう一方の時間帯の未配置には表示されません。</li>
+        </ul>
+
         <p className="text-stone-700 text-base mb-2 font-semibold">【スコアの意味】</p>
         <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
           <li><strong>0</strong> … そのモダリティには配置しない</li>
           <li><strong>1〜4</strong> … 必要人数を満たすために使用。4（絶対固定）→3→2→1の順で優先。同率の場合はランダムで選定</li>
-          <li><strong>トレーニング（5）</strong> … 先に配置するが、必要人数にはカウントしない。余裕があれば追加で配置</li>
+          <li><strong>トレーニング（5）</strong> … そのモダリティに配置し配置表にも記載するが、<strong>必要人数には含めない</strong>。必要人数はスコア1〜4の職員で別途満たす。</li>
         </ul>
 
-        <p className="text-stone-700 text-base mb-2 font-semibold">【初回配置（日付ごと・モダリティごと）】</p>
-        <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
-          <li>トレーニング（スコア5）をそのモダリティに先に配置（必要人数には含めない）</li>
-          <li>必要人数をスコア1〜4の職員で埋める。AMとPMに同じ職員を入れられる場合は同じ人を優先（パートでAM/PM未選択の場合は両方可能）</li>
-          <li>1人の職員は1日1つのモダリティのみ</li>
-        </ol>
-
-        <p className="text-stone-700 text-base mb-2 font-semibold">【必要人数が満たない場合のループ】</p>
-        <p className="text-stone-700 text-base mb-1">次の①→②を、進まなくなるか不足が解消するまで繰り返します。</p>
-        <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
-          <li><strong>① 他モダリティから移動</strong> … 不足しているモダリティに、他モダリティの余剰または未配置の職員を配置</li>
-          <li><strong>② 空きに未配置を配置</strong> … ①で空いた枠に、その日の未配置職員を配置</li>
-        </ol>
-
-        <p className="text-stone-700 text-base mb-2 font-semibold">【それでも不足する場合】</p>
+        <p className="text-stone-700 text-base mb-2 font-semibold">【トレーニングの扱い】</p>
         <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
-          <li>週休の割り当てを自動で変更（週休を別の平日にずらす）し、再配置してから再度 ①→② のループを実行します。週休割り当ての変更は当番表のデータにも保存されます。</li>
+          <li>トレーニング（スコア5）の職員は、そのモダリティに配置され、配置表にも表示されます。</li>
+          <li>必要人数（○名）はトレーニングを除いた人数で判定します。不足・グレー表示も同様です。</li>
+          <li>不足を埋める際は<strong>スコア1〜4の職員のみ</strong>を他モダリティから移動したり未配置から充てます。トレーニングは他モダリティへ移したり、不足補充には使いません。</li>
         </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【B と救命(日勤)PM】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>当番表で B の職員は、その日の PM「救命(日勤)」に自動で充てられます。もともと救命PMにいた職員は、その日の PM 未配置に移ります。</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【配置表作成のロジック（概要）】</p>
+        <p className="text-stone-700 text-base mb-1">詳細は「配置表作成のロジック」メニューを参照。ここでは要点のみ。</p>
+        <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
+          <li>初回配置：①スコア4で埋める → ②トレーニングを配置 → ③対象職員が少ないモダリティからスコア1〜4で不足分を埋める。</li>
+          <li>B を救命(日勤)PMに充て、退けた人を PM 未配置に追加。</li>
+          <li>不足セルがある間、①他モダリティから移動 → ②空いた枠に未配置を配置、を繰り返す。</li>
+          <li>それでも不足する場合は週休割り当てを変更して再配置。</li>
+        </ol>
 
         <p className="text-stone-700 text-base mb-2 font-semibold">【表示】</p>
         <ul className="text-stone-700 text-base space-y-1 list-disc list-inside">
           <li>配置表の各セル内の職員名は、IDの昇順で表示されます。</li>
           <li>不足しているセル（必要人数に満たないAM/PM）は灰色で表示されます。</li>
+        </ul>
+      </>
+    )
+  },
+  allocationLogic: {
+    title: '配置表作成のロジック',
+    body: (
+      <>
+        <p className="text-stone-700 text-base mb-2 font-semibold">【1. 初回配置（buildOneAllocation）】</p>
+        <p className="text-stone-700 text-base mb-1">平日ごと、配置対象外を除いた職員で枠を埋めます。モダリティの処理順は<strong>対象職員が少ないモダリティから</strong>です。</p>
+        <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
+          <li><strong>① スコア4で埋める</strong> … そのモダリティのスコアが4の職員を、必要AM/PMの範囲で優先配置（AM・PM両方可能な人は両方に配置）。</li>
+          <li><strong>② トレーニングを配置</strong> … スコア5の職員をそのモダリティに配置。必要人数にはカウントしない。</li>
+          <li><strong>③ スコア1〜4で不足分を埋める</strong> … 対象職員が少ないモダリティから順に、AM・PM両方可能な人を優先し、その後AMのみ・PMのみで埋める。同率はランダム。</li>
+          <li>不足が残る場合はその日を「不足」としてマーク。</li>
+        </ol>
+        <p className="text-stone-700 text-base mb-2">複数回試行して不足が最小の結果を採用します。</p>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【2. B を救命(日勤)PMに充てる】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>当番表で B の職員がいる日は、その日の「救命(日勤)」モダリティの PM を B のみにします。</li>
+          <li>もともと救命PMにいた職員（B以外）は、その時点で未配置扱いにし、<strong>PM 未配置</strong>に追加します（AM 未配置には出しません）。</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【3. 未配置リスト（AM / PM 別）】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>その日にいずれの AM スロットにも入っていない職員のリストを「AM 未配置」、PM スロットにも入っていない職員のリストを「PM 未配置」として保持します。</li>
+          <li>パートで「AMのみ」「PMのみ」の職員は、勤務可能な時間帯の未配置にのみ含めます。配置できない時間帯の未配置には表示しません。</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【4. 不足を埋めるループ】</p>
+        <p className="text-stone-700 text-base mb-1">不足しているモダリティ・AM/PM（トレーニング除く人数が不足）がある間、次を繰り返します。</p>
+        <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
+          <li><strong>① 他モダリティから移動</strong> … 不足しているモダリティに、<strong>他モダリティの余剰（トレーニング以外）</strong>または<strong>未配置のスコア1〜4</strong>の職員を移動して配置。トレーニングは移動しない。</li>
+          <li><strong>② 空きに未配置を配置</strong> … ①で空いた枠に、その日の未配置のうち<strong>スコア1〜4</strong>の職員を配置。トレーニングは不足補充には使わない。</li>
+          <li>各ステップの最後で、その日の AM 未配置・PM 未配置を再計算。救命PMから退けた人は PM 未配置に必ず残す。</li>
+        </ol>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【5. それでも不足する場合】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside mb-3">
+          <li>週休の割り当てを自動で変更（週休を別の平日にずらす）し、初回配置から再実行。その後 ④ のループも再度実行します。週休の変更は当番表データに保存されます。</li>
+        </ul>
+
+        <p className="text-stone-700 text-base mb-2 font-semibold">【6. 重複表示】</p>
+        <ul className="text-stone-700 text-base space-y-1 list-disc list-inside">
+          <li>同一日の中で、モダリティ・未配置のうち同じ職員が AM 列または PM 列に 2 回以上登場する場合はグレー背景で表示。B の職員が救命(日勤)PMにいる場合は重複扱いにしません。</li>
         </ul>
       </>
     )

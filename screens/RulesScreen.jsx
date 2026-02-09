@@ -20,7 +20,7 @@ const EXPLANATIONS = {
         <p className="text-stone-700 text-base mb-3">職員を登録し、各モダリティの配置スコア（0〜4）を設定する画面です。</p>
         <ul className="text-stone-700 text-base space-y-2 list-disc list-inside">
           <li>左の一覧から職員をクリックして編集、または「新規登録」で追加</li>
-          <li>職員ID・氏名・入職年数・役職を入力</li>
+          <li>氏名・入職年数（必須）と役職を入力。一覧の順序はドラッグで変更可能</li>
           <li>各モダリティごとに配置スコア（0〜4）を設定。スコアの意味は「配置スコア」ボタンで確認</li>
           <li>入力内容は自動で保存されます</li>
         </ul>
@@ -156,6 +156,7 @@ const EXPLANATIONS = {
         <ol className="text-stone-700 text-base space-y-1 list-decimal list-inside mb-3">
           <li>トレーニング（スコア5）をそのモダリティに先に配置（必要人数には含めない）</li>
           <li>必要人数をスコア1〜4の職員で埋める。AMとPMに同じ職員を入れられる場合は同じ人を優先（パートでAM/PM未選択の場合は両方可能）</li>
+          <li><strong>救命(日勤)</strong> … B担当者はその日の救命(日勤)のPMに配置し、もともとPMにいた人は未配置に戻します</li>
           <li>1人の職員は1日1つのモダリティのみ</li>
         </ol>
 

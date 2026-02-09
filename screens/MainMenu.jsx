@@ -57,14 +57,87 @@ function downloadBackup() {
   }
 }
 
+/** 職員情報とモダリティ情報だけをバックアップ（夜勤・日勤の順番・開始者も含む） */
+function downloadStaffAndModalityBackup() {
+  try {
+    const modalityData = localStorage.getItem('modalityData');
+    const staffData = localStorage.getItem('staffData');
+    const scheduleDataRaw = localStorage.getItem('scheduleData');
+    let nightShiftOrder = [];
+    let dayShiftOrder = [];
+    let nightShiftStartId = null;
+    let dayShiftStartId = null;
+    let pairs = [];
+    if (scheduleDataRaw) {
+      try {
+        const scheduleData = JSON.parse(scheduleDataRaw);
+        if (Array.isArray(scheduleData.nightShiftOrder)) nightShiftOrder = scheduleData.nightShiftOrder;
+        if (Array.isArray(scheduleData.dayShiftOrder)) dayShiftOrder = scheduleData.dayShiftOrder;
+        if (scheduleData.nightShiftStartId != null) nightShiftStartId = scheduleData.nightShiftStartId;
+        if (scheduleData.dayShiftStartId != null) dayShiftStartId = scheduleData.dayShiftStartId;
+        if (Array.isArray(scheduleData.pairs)) pairs = scheduleData.pairs;
+      } catch (_) {}
+    }
+    const backup = {
+      modalityData: modalityData ? JSON.parse(modalityData) : [],
+      staffData: staffData ? JSON.parse(staffData) : [],
+      nightShiftOrder,
+      dayShiftOrder,
+      nightShiftStartId,
+      dayShiftStartId,
+      pairs,
+      backupAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    a.download = `backup-staff-modality-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    alert('職員・モダリティのバックアップをダウンロードしました');
+  } catch (e) {
+    alert('バックアップの作成に失敗しました');
+  }
+}
+
 function restoreFromBackup(file, onDone) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const backup = JSON.parse(reader.result);
+      // 復元前に既存データをリセット
+      localStorage.removeItem('modalityData');
+      localStorage.removeItem('staffData');
+      localStorage.removeItem('scheduleData');
+      localStorage.removeItem('leaveData');
+      localStorage.removeItem('allocationData');
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_KEY_MONTHLY);
+
+      let text = reader.result;
+      if (typeof text !== 'string') text = String(text);
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      const backup = JSON.parse(text);
       if (backup.modalityData != null) localStorage.setItem('modalityData', JSON.stringify(backup.modalityData));
       if (backup.staffData != null) localStorage.setItem('staffData', JSON.stringify(backup.staffData));
-      if (backup.scheduleData != null) localStorage.setItem('scheduleData', JSON.stringify(backup.scheduleData));
+      if (backup.scheduleData != null) {
+        const scheduleData = { ...backup.scheduleData };
+        if (scheduleData.weeklyOff) scheduleData.weeklyOff = normalizeWeeklyOff(scheduleData.weeklyOff);
+        localStorage.setItem('scheduleData', JSON.stringify(scheduleData));
+      } else if (backup.nightShiftOrder != null || backup.dayShiftOrder != null || backup.nightShiftStartId != null || backup.dayShiftStartId != null || backup.pairs != null) {
+        const existing = (() => { try { const r = localStorage.getItem('scheduleData'); return r ? JSON.parse(r) : {}; } catch (_) { return {}; } })();
+        const scheduleData = {
+          ...existing,
+          nightShiftOrder: Array.isArray(backup.nightShiftOrder) ? backup.nightShiftOrder : (existing.nightShiftOrder || []),
+          dayShiftOrder: Array.isArray(backup.dayShiftOrder) ? backup.dayShiftOrder : (existing.dayShiftOrder || []),
+          nightShiftStartId: backup.nightShiftStartId ?? existing.nightShiftStartId ?? null,
+          dayShiftStartId: backup.dayShiftStartId ?? existing.dayShiftStartId ?? null,
+          pairs: Array.isArray(backup.pairs) ? backup.pairs : (existing.pairs || [])
+        };
+        localStorage.setItem('scheduleData', JSON.stringify(scheduleData));
+      }
       if (backup.leaveData != null) localStorage.setItem('leaveData', JSON.stringify(backup.leaveData));
       if (backup.allocationData != null) localStorage.setItem('allocationData', JSON.stringify(backup.allocationData));
       if (backup.calendarComments != null) localStorage.setItem(STORAGE_KEY, JSON.stringify(backup.calendarComments));
@@ -73,14 +146,15 @@ function restoreFromBackup(file, onDone) {
       alert('復元しました。画面を再読み込みします');
       window.location.reload();
     } catch (e) {
-      alert('バックアップファイルの復元に失敗しました');
+      const msg = (e && (e.message || String(e))) || '不明なエラー';
+      alert(`バックアップファイルの復元に失敗しました。\n\n${msg}`);
     }
   };
   reader.onerror = () => alert('ファイルの読み込みに失敗しました');
   reader.readAsText(file, 'UTF-8');
 }
 
-/** weeklyOff の旧形式（{ date: { am: [], pm: [] } }）を現形式（{ date: staffId[] }）に正規化 */
+/** 週休を正規化。{ am, pm } はマージせず保持（AM/PM を同時に扱わない） */
 function normalizeWeeklyOff(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const result = {};
@@ -88,11 +162,18 @@ function normalizeWeeklyOff(raw) {
     if (Array.isArray(value)) {
       result[dateStr] = value;
     } else if (value && typeof value === 'object' && !Array.isArray(value) && (value.am || value.pm)) {
-      const merged = [...(value.am || []), ...(value.pm || [])];
-      result[dateStr] = [...new Set(merged)];
+      result[dateStr] = { am: value.am ? [...value.am] : [], pm: value.pm ? [...value.pm] : [] };
     }
   }
   return result;
+}
+
+/** その日の週休IDリスト。array ならそのまま、{ am, pm } ならマージ */
+function getWeeklyOffIds(weeklyOff, dateStr) {
+  const raw = weeklyOff?.[dateStr];
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  return [...new Set([...(raw.am || []), ...(raw.pm || [])])];
 }
 
 /** バックアップファイルを読み、weeklyOff を修正してダウンロード */
@@ -476,14 +557,13 @@ export default function MainMenu({ onNavigate }) {
       <div className="relative flex flex-col gap-0 w-full max-w-6xl mx-auto flex-1 min-h-0">
         {/* 左：ボタン / 右：カレンダー */}
         <div className="flex gap-6 w-full items-stretch flex-1 min-h-0">
-          <div className="relative z-10 shrink-0 w-[420px] flex flex-col min-h-0 bg-slate-50 rounded-2xl border-2 border-slate-400 shadow-sm p-2">
-            <div className="flex-1 flex flex-col gap-1.5 min-h-0 min-w-0 overflow-y-auto">
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="📝" title="職員情報登録" detail="職員の登録・編集、各モダリティの配置スコア（0〜4）を設定" onClick={() => onNavigate('staff-db')} accent="violet" />
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="⚙️" title="モダリティ情報入力" detail="配置先モダリティの追加、必要人数（一律または曜日別）の設定" onClick={() => onNavigate('modality-db')} accent="cyan" />
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="🏖️" title="休暇・出張入力" detail="休暇・出張の日付と職員を登録し、カレンダーに反映" onClick={() => onNavigate('leave-input')} accent="rose" />
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="🗓️" title="当番表作成" detail="期間を設定し、夜勤・日勤・週休の順番・ペアを割り当てて保存" onClick={() => onNavigate('shift-schedule')} onPointerDown={() => onNavigate('shift-schedule')} accent="amber" />
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="📊" title="配置表作成" detail="当番表を読み込み、スコアに基づいて自動配置。保存・CSV出力" onClick={() => onNavigate('allocation')} accent="indigo" />
-              <MenuButton compact className="flex-1 min-h-[72px]" icon="📜" title="ルール" detail="使い方の流れ、配置スコア・配置対象外・自動配置のルール確認" onClick={() => onNavigate('rules')} accent="emerald" />
+          <div className="relative z-10 shrink-0 w-[420px] flex flex-col min-h-0 bg-slate-50 rounded-2xl border-2 border-slate-400 shadow-sm p-1.5">
+            <div className="flex-1 flex flex-col gap-1 min-h-0 min-w-0 overflow-y-auto">
+              <MenuButton compact className="shrink-0 min-h-[52px]" icon="📝" title="職員情報登録" detail="職員の登録・編集、各モダリティの配置スコア（0〜4）を設定" onClick={() => onNavigate('staff-db')} accent="violet" />
+              <MenuButton compact className="shrink-0 min-h-[52px]" icon="⚙️" title="モダリティ情報入力" detail="配置先モダリティの追加、必要人数（一律または曜日別）の設定" onClick={() => onNavigate('modality-db')} accent="cyan" />
+              <MenuButton compact className="shrink-0 min-h-[52px]" icon="🏖️" title="休暇・出張入力" detail="休暇・出張の日付と職員を登録し、カレンダーに反映" onClick={() => onNavigate('leave-input')} accent="rose" />
+              <MenuButton compact className="shrink-0 min-h-[52px]" icon="🗓️" title="当番表・配置表作成" detail="期間設定、当番表の作成・週休割当のあと、その下で配置表を自動作成・保存" onClick={() => onNavigate('shift-schedule')} onPointerDown={() => onNavigate('shift-schedule')} accent="amber" />
+              <MenuButton compact className="shrink-0 min-h-[52px]" icon="📜" title="ルール" detail="使い方の流れ、配置スコア・配置対象外・自動配置のルール確認" onClick={() => onNavigate('rules')} accent="emerald" />
               <input
                 ref={restoreInputRef}
                 type="file"
@@ -495,21 +575,29 @@ export default function MainMenu({ onNavigate }) {
                   e.target.value = '';
                 }}
               />
-              <div className="mt-2 pt-2 border-t-2 border-slate-300 shrink-0">
-                <p className="text-xs font-bold text-stone-600 uppercase tracking-wider mb-1.5 px-0.5">データのバックアップ</p>
-                <div className="flex flex-col gap-1.5">
+              <div className="mt-1.5 pt-1.5 border-t-2 border-slate-300 shrink-0">
+                <p className="text-xs font-bold text-stone-600 uppercase tracking-wider mb-1 px-0.5">データのバックアップ</p>
+                <div className="flex flex-col gap-1">
                   <button
                     type="button"
                     onClick={downloadBackup}
-                    className="pl-3 pr-3 py-2 bg-amber-50 hover:bg-amber-100 border-2 border-amber-400 rounded-xl text-amber-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                    className="pl-3 pr-3 py-1.5 bg-amber-50 hover:bg-amber-100 border-2 border-amber-400 rounded-xl text-amber-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
                   >
                     <span className="shrink-0 text-lg">📦</span>
                     <span>今のデータをファイルに保存</span>
                   </button>
                   <button
                     type="button"
+                    onClick={downloadStaffAndModalityBackup}
+                    className="pl-3 pr-3 py-1.5 bg-teal-50 hover:bg-teal-100 border-2 border-teal-400 rounded-xl text-teal-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                  >
+                    <span className="shrink-0 text-lg">👥</span>
+                    <span>職員・モダリティのみバックアップ</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => restoreInputRef.current?.click()}
-                    className="pl-3 pr-3 py-2 bg-violet-50 hover:bg-violet-100 border-2 border-violet-400 rounded-xl text-violet-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                    className="pl-3 pr-3 py-1.5 bg-violet-50 hover:bg-violet-100 border-2 border-violet-400 rounded-xl text-violet-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
                   >
                     <span className="shrink-0 text-lg">📥</span>
                     <span>ファイルからデータを復元</span>
@@ -517,7 +605,7 @@ export default function MainMenu({ onNavigate }) {
                   <button
                     type="button"
                     onClick={resetAllData}
-                    className="pl-3 pr-3 py-2 bg-rose-50 hover:bg-rose-100 border-2 border-rose-400 rounded-xl text-rose-800 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                    className="pl-3 pr-3 py-1.5 bg-rose-50 hover:bg-rose-100 border-2 border-rose-400 rounded-xl text-rose-800 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
                   >
                     <span className="shrink-0 text-lg">🗑️</span>
                     <span>全データをリセット</span>
@@ -664,7 +752,7 @@ export default function MainMenu({ onNavigate }) {
         };
         const leaveInfo = {
           dayOffId: daySched.dayOff ?? daySched.dayOffManual,
-          weeklyOffIds: weeklyOff[dateStr] || [],
+          weeklyOffIds: getWeeklyOffIds(weeklyOff, dateStr),
           dayLeaves: dayLeavesList
         };
         const manualStaff = allocation[dateStr]?._manualStaff || [];

@@ -88,7 +88,7 @@ function AppContent() {
       case 'rules':
         return <RulesScreen onBack={onBack} />;
       case 'shift-schedule':
-        return <ShiftScheduleScreen onBack={onBack} />;
+        return <ShiftScheduleScreen onBack={onBack} onNavigate={onNavigate} />;
       case 'leave-input':
         return <LeaveInputScreen onBack={onBack} />;
       case 'allocation':

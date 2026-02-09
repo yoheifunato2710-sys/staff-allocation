@@ -9,6 +9,80 @@ body {
   color: #0f172a;
 }
 
+/* 当番表カレンダーをA4縦1枚で印刷（当番表のみ・縮尺・余白で1枚に収める） */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 5mm;
+  }
+  body * {
+    visibility: hidden;
+  }
+  #shift-calendar-print-area,
+  #shift-calendar-print-area * {
+    visibility: visible;
+  }
+  #shift-calendar-print-area .print\:hidden,
+  #shift-calendar-print-area .print\:hidden * {
+    visibility: hidden !important;
+    display: none !important;
+  }
+  #shift-calendar-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 200mm;
+    height: 287mm;
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+    background: white;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+  /* 当番表のみ表示。表の外側に枠を付け、横幅をいっぱいに */
+  #shift-calendar-print-area .shift-calendar-print-content {
+    visibility: visible !important;
+    display: block !important;
+    width: 100% !important;
+    flex-shrink: 0;
+    transform-origin: top center;
+    transform: scale(1, 0.96);
+    border: 2px solid #1e293b;
+    box-sizing: border-box;
+  }
+  #shift-calendar-print-area .shift-calendar-print-content table {
+    width: 100% !important;
+    font-size: 0.65rem !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #shift-calendar-print-area .shift-calendar-print-content th,
+  #shift-calendar-print-area .shift-calendar-print-content td {
+    padding: 0.5mm 0.25mm !important;
+    font-size: inherit !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #shift-calendar-print-area .shift-calendar-print-content tr {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #shift-calendar-print-area .shift-calendar-print-content button {
+    min-height: 0 !important;
+    padding: 0.5mm !important;
+    font-size: inherit !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
 @layer components {
   /* 全画面共通: 戻る・ヘッダー用ボタン */
   .btn-header {

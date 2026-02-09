@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, Component } from 'react';
 import { useData } from '../context/DataContext';
+import { runAllocationForCalendar, AllocationTableView } from './AllocationScreen';
 
 const MAX_UNDO = 50;
 
@@ -31,7 +32,7 @@ function useSafeCalendar(calendar) {
 }
 const NAV_GUARD_MS = 1200; // 表示直後の誤タップで戻るのを防ぐ（Edge 対策で App と揃えて 1.2 秒）
 
-/** 旧形式の weeklyOff（{ date: { am: [], pm: [] } }）を現形式（{ date: staffId[] }）に正規化 */
+/** 週休を「その日の職員IDリスト」に正規化。{ am, pm } はマージせず保持（右・左を同時に扱わない） */
 function normalizeWeeklyOff(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const result = {};
@@ -39,11 +40,69 @@ function normalizeWeeklyOff(raw) {
     if (Array.isArray(value)) {
       result[dateStr] = value;
     } else if (value && typeof value === 'object' && !Array.isArray(value) && (value.am || value.pm)) {
-      const merged = [...(value.am || []), ...(value.pm || [])];
-      result[dateStr] = [...new Set(merged)];
+      result[dateStr] = { am: value.am ? [...value.am] : [], pm: value.pm ? [...value.pm] : [] };
     }
   }
   return result;
+}
+
+/** その日の週休IDリスト（表示・判定用）。array ならそのまま、{ am, pm } ならマージして返す */
+function getWeeklyOffIds(weeklyOff, dateStr) {
+  const raw = weeklyOff?.[dateStr];
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  return [...new Set([...(raw.am || []), ...(raw.pm || [])])];
+}
+
+/**
+ * 週休のルール（1箇所で定義）
+ * 【付与する週休の日数】土日祝の勤務に応じて加算（当番は「右（手動）優先、空なら左（自動）」で判定）
+ *   金曜夜勤 +1、土曜夜勤 +2、土曜日勤/サポート +1、日曜日勤/サポート +1、日曜夜勤 +1、土日のB +1（土と日でそれぞれ）
+ * 【割り当て先】平日のみ。土日祝は割り当てない。
+ * 【割り当てない日】その日に「有効当番」で夜勤・日勤・サポート・B・非番のいずれかである日、または休暇入力がある日。
+ */
+function getEffectiveScheduleForDay(schedule, dateStr, calendar, calendarIdx, surgeryDays) {
+  const daySchedule = schedule[dateStr] || {};
+  const nextDay = calendarIdx >= 0 && calendar[calendarIdx + 1] ? calendar[calendarIdx + 1] : null;
+  const prevDay = calendarIdx > 0 ? calendar[calendarIdx - 1] : null;
+  const bPerson = surgeryDays.includes(dateStr) && nextDay
+    ? (schedule[nextDay.date]?.nightShiftManual ?? schedule[nextDay.date]?.nightShift)
+    : (daySchedule.bManual ?? daySchedule.b);
+  const dayOffPerson = prevDay
+    ? (schedule[prevDay.date]?.nightShiftManual ?? schedule[prevDay.date]?.nightShift)
+    : (daySchedule.dayOffManual ?? daySchedule.dayOff);
+  return {
+    dayShift: daySchedule.dayShiftManual ?? daySchedule.dayShift,
+    support: daySchedule.supportManual ?? daySchedule.support,
+    nightShift: daySchedule.nightShiftManual ?? daySchedule.nightShift,
+    b: bPerson,
+    dayOff: dayOffPerson
+  };
+}
+
+function isAssignedOnDay(staffId, eff) {
+  return eff.nightShift === staffId || eff.dayShift === staffId || eff.support === staffId || eff.b === staffId || eff.dayOff === staffId;
+}
+
+/** 付与する週休の日数を計算（土日祝の勤務のみ。当番は有効当番で判定） */
+function calcWeeklyOffDaysForStaff(staffId, calendar, schedule, surgeryDays) {
+  let days = 0;
+  calendar.forEach((day, idx) => {
+    const dateStr = day.date;
+    const eff = getEffectiveScheduleForDay(schedule, dateStr, calendar, idx, surgeryDays);
+    const onNight = eff.nightShift === staffId;
+    const onDay = eff.dayShift === staffId;
+    const onSupport = eff.support === staffId;
+    const onB = eff.b === staffId;
+    const dow = day.dayOfWeekNum ?? new Date(dateStr + 'T12:00:00').getDay();
+    if (dow === 5 && onNight) days += 1;
+    if (dow === 6 && onNight) days += 2;
+    if (dow === 6 && (onDay || onSupport)) days += 1;
+    if (dow === 0 && (onDay || onSupport)) days += 1;
+    if (dow === 0 && onNight) days += 1;
+    if ((dow === 6 || dow === 0) && onB) days += 1;
+  });
+  return days;
 }
 
 /** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
@@ -79,8 +138,8 @@ function getHolidays(year) {
   return set;
 }
 
-export default function ShiftScheduleScreen({ onBack }) {
-  const { staffData: rawStaffData } = useData();
+export default function ShiftScheduleScreen({ onBack, onNavigate }) {
+  const { staffData: rawStaffData, modalityData: rawModalityData } = useData();
   const staffData = Array.isArray(rawStaffData) ? rawStaffData : [];
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -102,6 +161,18 @@ export default function ShiftScheduleScreen({ onBack }) {
   const [dayShiftStartId, setDayShiftStartId] = useState(null); // その月の日勤開始の人
   const [showNightStartPicker, setShowNightStartPicker] = useState(false);
   const [showDayStartPicker, setShowDayStartPicker] = useState(false);
+  const [allocationRunning, setAllocationRunning] = useState(false);
+  /** 配置表データ（配置表作成で更新。初回は localStorage から読む） */
+  const [allocation, setAllocation] = useState(() => {
+    try {
+      const raw = localStorage.getItem('allocationData');
+      if (!raw) return {};
+      const data = JSON.parse(raw);
+      return (data.allocation && typeof data.allocation === 'object') ? data.allocation : {};
+    } catch (_) {
+      return {};
+    }
+  });
   const undoHistoryRef = useRef([]);
   const redoHistoryRef = useRef([]);
   const [backButtonReady, setBackButtonReady] = useState(false);
@@ -168,6 +239,63 @@ export default function ShiftScheduleScreen({ onBack }) {
     setWeeklyOff({});
   };
 
+  /** カレンダー配列から夜勤・日勤・非番・B のスケジュールを計算（自動割当・カレンダー生成の両方で使用） */
+  const computeScheduleFromCalendar = (cal, existingSchedule, nightOrder, dayOrder, nightStart, dayStart, pairList, surgeryDayList) => {
+    const newSchedule = {};
+    let nightStartIdx = nightOrder.indexOf(nightStart);
+    if (nightStartIdx < 0) nightStartIdx = 0;
+    let dayStartIdx = dayOrder.indexOf(dayStart);
+    if (dayStartIdx < 0) dayStartIdx = 0;
+    let nightIndex = nightStartIdx;
+    let dayIndex = dayStartIdx;
+    cal.forEach((day, idx) => {
+      const dateStr = day.date;
+      const prevDaySchedule = existingSchedule[dateStr];
+      newSchedule[dateStr] = {
+        nightShift: null, dayShift: null, support: null, b: null, dayOff: null,
+        dayShiftManual: prevDaySchedule?.dayShiftManual ?? null,
+        supportManual: prevDaySchedule?.supportManual ?? null,
+        nightShiftManual: prevDaySchedule?.nightShiftManual ?? null,
+        bManual: prevDaySchedule?.bManual ?? null,
+        dayOffManual: prevDaySchedule?.dayOffManual ?? null
+      };
+      if (nightOrder.length > 0) {
+        newSchedule[dateStr].nightShift = nightOrder[nightIndex % nightOrder.length];
+        nightIndex++;
+      }
+      if (idx > 0) {
+        const prevDate = cal[idx - 1].date;
+        if (newSchedule[prevDate]?.nightShift) {
+          newSchedule[dateStr].dayOff = newSchedule[prevDate].nightShift;
+        }
+      } else {
+        if (nightOrder.length > 0) {
+          const startIdx = nightOrder.indexOf(nightStart) >= 0 ? nightOrder.indexOf(nightStart) : 0;
+          const prevIdx = (startIdx - 1 + nightOrder.length) % nightOrder.length;
+          newSchedule[dateStr].dayOff = nightOrder[prevIdx];
+        }
+      }
+      if (day.isWeekend || day.isHoliday) {
+        if (dayOrder.length > 0) {
+          const dayShiftPerson = dayOrder[dayIndex % dayOrder.length];
+          newSchedule[dateStr].dayShift = dayShiftPerson;
+          const pair = pairList.find(p => p.person1 === dayShiftPerson || p.person2 === dayShiftPerson);
+          if (pair) {
+            newSchedule[dateStr].support = pair.person1 === dayShiftPerson ? pair.person2 : pair.person1;
+          }
+          dayIndex++;
+        }
+      }
+      if (surgeryDayList.includes(dateStr) && idx < cal.length - 1) {
+        const nextDate = cal[idx + 1].date;
+        if (newSchedule[nextDate]?.nightShift) {
+          newSchedule[dateStr].b = newSchedule[nextDate].nightShift;
+        }
+      }
+    });
+    return newSchedule;
+  };
+
   const generateCalendar = () => {
     if (!startDate || !endDate) {
       alert('⚠️ 開始日と終了日を入力してください');
@@ -197,7 +325,17 @@ export default function ShiftScheduleScreen({ onBack }) {
       current.setDate(current.getDate() + 1);
     }
     setCalendar(days);
-    alert('✅ カレンダーを生成しました');
+
+    if (nightShiftOrder.length > 0) {
+      const nightStart = nightShiftStartId ?? nightShiftOrder[0];
+      const dayStart = dayShiftStartId ?? (dayShiftOrder.length > 0 ? dayShiftOrder[0] : null);
+      const newSchedule = computeScheduleFromCalendar(days, schedule, nightShiftOrder, dayShiftOrder, nightStart, dayStart, pairs, surgeryDays);
+      pushUndoState();
+      setSchedule(newSchedule);
+      alert('✅ カレンダーを生成し、職員を配置しました');
+    } else {
+      alert('✅ カレンダーを生成しました。夜勤順番を設定してから再度「カレンダーを生成」を押すと職員も自動で配置されます');
+    }
   };
 
   const toggleSurgeryDay = (date) => {
@@ -209,94 +347,18 @@ export default function ShiftScheduleScreen({ onBack }) {
   };
 
   const autoAssign = (overrideNightStartId, overrideDayStartId) => {
-    let cal = calendar;
-    if (cal.length === 0 && startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      if (start <= end) {
-        const days = [];
-        const current = new Date(start);
-        while (current <= end) {
-          const dateStr = current.toISOString().split('T')[0];
-          const dayOfWeek = current.getDay();
-          const year = current.getFullYear();
-          const holidays = getHolidays(year);
-          days.push({
-            date: dateStr,
-            dayOfWeek: ['日', '月', '火', '水', '木', '金', '土'][dayOfWeek],
-            dayOfWeekNum: dayOfWeek,
-            isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
-            isHoliday: holidays.has(dateStr)
-          });
-          current.setDate(current.getDate() + 1);
-        }
-        setCalendar(days);
-        cal = days;
-      }
-    }
+    const cal = calendar;
     if (cal.length === 0) {
-      alert('⚠️ 開始日・終了日を入力してください');
+      alert('⚠️ まず「カレンダーを生成」で期間のカレンダーを作成してください');
       return;
     }
     if (nightShiftOrder.length === 0) {
       alert('⚠️ 夜勤順番リストを設定してください');
       return;
     }
-    const nightStart = overrideNightStartId !== undefined ? overrideNightStartId : nightShiftStartId;
-    const dayStart = overrideDayStartId !== undefined ? overrideDayStartId : dayShiftStartId;
-    const newSchedule = {};
-    let nightStartIdx = nightShiftOrder.indexOf(nightStart);
-    if (nightStartIdx < 0) nightStartIdx = 0;
-    let dayStartIdx = dayShiftOrder.indexOf(dayStart);
-    if (dayStartIdx < 0) dayStartIdx = 0;
-    let nightIndex = nightStartIdx;
-    let dayIndex = dayStartIdx;
-    cal.forEach((day, idx) => {
-      const dateStr = day.date;
-      const prevDaySchedule = schedule[dateStr];
-      newSchedule[dateStr] = {
-        nightShift: null, dayShift: null, support: null, b: null, dayOff: null,
-        dayShiftManual: prevDaySchedule?.dayShiftManual ?? null,
-        supportManual: prevDaySchedule?.supportManual ?? null,
-        nightShiftManual: prevDaySchedule?.nightShiftManual ?? null,
-        bManual: prevDaySchedule?.bManual ?? null,
-        dayOffManual: prevDaySchedule?.dayOffManual ?? null
-      };
-      if (nightShiftOrder.length > 0) {
-        newSchedule[dateStr].nightShift = nightShiftOrder[nightIndex % nightShiftOrder.length];
-        nightIndex++;
-      }
-      if (idx > 0) {
-        const prevDate = calendar[idx - 1].date;
-        if (newSchedule[prevDate]?.nightShift) {
-          newSchedule[dateStr].dayOff = newSchedule[prevDate].nightShift;
-        }
-      } else {
-        // 初日: 夜勤開始者の前の夜勤者（リストは循環、1人目の前は最後、最後の次は1人目）
-        if (nightShiftOrder.length > 0) {
-          const startIdx = nightShiftOrder.indexOf(nightStart) >= 0 ? nightShiftOrder.indexOf(nightStart) : 0;
-          const prevIdx = (startIdx - 1 + nightShiftOrder.length) % nightShiftOrder.length;
-          newSchedule[dateStr].dayOff = nightShiftOrder[prevIdx];
-        }
-      }
-      if (day.isWeekend || day.isHoliday) {
-        if (dayShiftOrder.length > 0) {
-          const dayShiftPerson = dayShiftOrder[dayIndex % dayShiftOrder.length];
-          newSchedule[dateStr].dayShift = dayShiftPerson;
-          const pair = pairs.find(p => p.person1 === dayShiftPerson || p.person2 === dayShiftPerson);
-          if (pair) {
-            newSchedule[dateStr].support = pair.person1 === dayShiftPerson ? pair.person2 : pair.person1;
-          }
-          dayIndex++;
-        }
-      }
-      if (surgeryDays.includes(dateStr) && idx < cal.length - 1) {
-        const nextDate = cal[idx + 1].date;
-        if (newSchedule[nextDate]?.nightShift) {
-          newSchedule[dateStr].b = newSchedule[nextDate].nightShift;
-        }
-      }
-    });
+    const nightStart = overrideNightStartId !== undefined ? overrideNightStartId : (nightShiftStartId ?? nightShiftOrder[0]);
+    const dayStart = overrideDayStartId !== undefined ? overrideDayStartId : (dayShiftStartId ?? (dayShiftOrder.length > 0 ? dayShiftOrder[0] : null));
+    const newSchedule = computeScheduleFromCalendar(cal, schedule, nightShiftOrder, dayShiftOrder, nightStart, dayStart, pairs, surgeryDays);
     pushUndoState();
     setSchedule(newSchedule);
     if (overrideNightStartId === undefined && overrideDayStartId === undefined) {
@@ -314,37 +376,15 @@ export default function ShiftScheduleScreen({ onBack }) {
     const weekdays = calendar.filter(d => !d.isWeekend && !d.isHoliday);
     const remaining = {};
     staffData.forEach(staff => {
-      const staffId = staff.id;
-      let weeklyOffDays = 0;
-      calendar.forEach((day, idx) => {
-        const dateStr = day.date;
-        const daySchedule = schedule[dateStr] || {};
-        const nextDay = calendar[idx + 1];
-        const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift ?? schedule[nextDay.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
-        const onNight = daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId;
-        const onDay = daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId;
-        const onSupport = daySchedule.support === staffId || daySchedule.supportManual === staffId;
-        const onB = bPerson === staffId || daySchedule.bManual === staffId;
-        if (day.dayOfWeekNum === 5 && onNight) weeklyOffDays += 1;
-        if (day.dayOfWeekNum === 6 && onNight) weeklyOffDays += 2;
-        if (day.dayOfWeekNum === 6 && (onDay || onSupport)) weeklyOffDays += 1;
-        if (day.dayOfWeekNum === 0 && (onDay || onSupport)) weeklyOffDays += 1;
-        if (day.dayOfWeekNum === 0 && onNight) weeklyOffDays += 1;
-        if ((day.dayOfWeekNum === 6 || day.dayOfWeekNum === 0) && onB) weeklyOffDays += 1;
-      });
-      remaining[staff.id] = weeklyOffDays;
+      remaining[staff.id] = calcWeeklyOffDaysForStaff(staff.id, calendar, schedule, surgeryDays);
     });
 
     const newWeeklyOff = {};
     const staffOrder = [...staffData];
     weekdays.forEach((day, dayIndex) => {
       const dateStr = day.date;
-      const daySchedule = schedule[dateStr] || {};
       const calIdx = calendar.findIndex(d => d.date === dateStr);
-      const nextDay = calIdx >= 0 ? calendar[calIdx + 1] : null;
-      const prevDay = calIdx >= 0 ? calendar[calIdx - 1] : null;
-      const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay?.date]?.nightShift ?? schedule[nextDay?.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
-      const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShift ?? schedule[prevDay.date]?.nightShiftManual) : (daySchedule.dayOff ?? daySchedule.dayOffManual);
+      const eff = getEffectiveScheduleForDay(schedule, dateStr, calendar, calIdx, surgeryDays);
       const totalRemaining = Object.values(remaining).reduce((a, b) => a + b, 0);
       const daysLeft = weekdays.length - dayIndex;
       const quota = Math.min(daysLeft > 0 ? Math.ceil(totalRemaining / daysLeft) : 0, totalRemaining);
@@ -354,12 +394,7 @@ export default function ShiftScheduleScreen({ onBack }) {
         const staffId = staff.id;
         if (remaining[staffId] <= 0) continue;
         const hasOtherLeave = leaveData[dateStr]?.some(leave => leave.staffId === staffId);
-        const isAssigned =
-          daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId ||
-          daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId ||
-          daySchedule.support === staffId || daySchedule.supportManual === staffId ||
-          (daySchedule.b ?? bPerson) === staffId || daySchedule.bManual === staffId ||
-          (daySchedule.dayOff ?? dayOffPerson) === staffId || daySchedule.dayOffManual === staffId;
+        const isAssigned = isAssignedOnDay(staffId, eff);
         if (!hasOtherLeave && !isAssigned) {
           if (!newWeeklyOff[dateStr]) newWeeklyOff[dateStr] = [];
           newWeeklyOff[dateStr].push(staffId);
@@ -379,6 +414,13 @@ export default function ShiftScheduleScreen({ onBack }) {
       if (field === 'dayShift' || field === 'support' || field === 'nightShift') {
         next[date] = { ...next[date], [field + 'Edited']: true };
       }
+      if (field === 'nightShiftManual') {
+        const idx = calendar.findIndex(d => d && d.date === date);
+        const nextDay = idx >= 0 ? calendar[idx + 1] : null;
+        if (nextDay?.date) {
+          next[nextDay.date] = { ...next[nextDay.date], dayOffManual: value };
+        }
+      }
       return next;
     });
   };
@@ -389,25 +431,16 @@ export default function ShiftScheduleScreen({ onBack }) {
     const savedLeaveData = localStorage.getItem('leaveData');
     const leaveData = savedLeaveData ? JSON.parse(savedLeaveData).leaveData || {} : {};
     const hasOtherLeave = leaveData[toDate]?.some(leave => leave.staffId === staffId);
-    const daySchedule = schedule[toDate] || {};
     const calIdx = calendar.findIndex(d => d.date === toDate);
-    const nextDay = calIdx >= 0 ? calendar[calIdx + 1] : null;
-    const prevDay = calIdx >= 0 ? calendar[calIdx - 1] : null;
-    const bPerson = surgeryDays.includes(toDate) && nextDay ? (schedule[nextDay?.date]?.nightShift ?? schedule[nextDay?.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
-    const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShift ?? schedule[prevDay.date]?.nightShiftManual) : (daySchedule.dayOff ?? daySchedule.dayOffManual);
-    const isAssigned =
-      daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId ||
-      daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId ||
-      daySchedule.support === staffId || daySchedule.supportManual === staffId ||
-      (daySchedule.b ?? bPerson) === staffId || daySchedule.bManual === staffId ||
-      (daySchedule.dayOff ?? dayOffPerson) === staffId || daySchedule.dayOffManual === staffId;
+    const eff = getEffectiveScheduleForDay(schedule, toDate, calendar, calIdx, surgeryDays);
+    const isAssigned = isAssignedOnDay(staffId, eff);
     if (hasOtherLeave || isAssigned) return;
     setWeeklyOff(prev => {
       const next = { ...prev };
-      if (next[fromDate]) next[fromDate] = next[fromDate].filter(id => id !== staffId);
-      if (next[fromDate]?.length === 0) delete next[fromDate];
-      if (!next[toDate]) next[toDate] = [];
-      if (!next[toDate].includes(staffId)) next[toDate].push(staffId);
+      const fromIds = getWeeklyOffIds(prev, fromDate).filter(id => id !== staffId);
+      if (fromIds.length === 0) delete next[fromDate]; else next[fromDate] = fromIds;
+      const toIds = getWeeklyOffIds(prev, toDate);
+      if (!toIds.includes(staffId)) next[toDate] = [...toIds, staffId];
       return next;
     });
   };
@@ -415,12 +448,12 @@ export default function ShiftScheduleScreen({ onBack }) {
   const toggleWeeklyOff = (date, staffId) => {
     setWeeklyOff(prev => {
       const newData = { ...prev };
-      if (!newData[date]) newData[date] = [];
-      if (newData[date].includes(staffId)) {
-        newData[date] = newData[date].filter(id => id !== staffId);
-        if (newData[date].length === 0) delete newData[date];
+      const ids = getWeeklyOffIds(prev, date);
+      if (ids.includes(staffId)) {
+        const next = ids.filter(id => id !== staffId);
+        if (next.length === 0) delete newData[date]; else newData[date] = next;
       } else {
-        newData[date].push(staffId);
+        newData[date] = [...ids, staffId];
       }
       return newData;
     });
@@ -510,11 +543,23 @@ export default function ShiftScheduleScreen({ onBack }) {
             <div className="space-y-2">
               <div>
                 <label className="block text-sm mb-1 font-semibold text-stone-600 uppercase tracking-wider">開始日</label>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
+                <input type="date" value={startDate ?? ''} onChange={(e) => setStartDate(e.target.value ?? '')} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
               </div>
               <div>
                 <label className="block text-sm mb-1 font-semibold text-stone-600 uppercase tracking-wider">終了日</label>
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
+                <input
+                  type="date"
+                  value={endDate ?? ''}
+                  onChange={(e) => {
+                    try {
+                      const v = e?.target?.value;
+                      setEndDate(typeof v === 'string' ? v : '');
+                    } catch (_) {
+                      setEndDate('');
+                    }
+                  }}
+                  className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all"
+                />
               </div>
             </div>
           </div>
@@ -538,22 +583,22 @@ export default function ShiftScheduleScreen({ onBack }) {
               <button onClick={() => setShowPairModal(true)} className="btn-panel w-full bg-orange-600 hover:bg-orange-500 text-white shadow-md">ペア設定 ({pairs.length}組)</button>
             </div>
           </div>
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
-            <h3 className="font-bold mb-2 text-stone-800 text-base">⚙️ 実行</h3>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={autoAssignWeeklyOff} className="btn-panel bg-indigo-600 hover:bg-indigo-500 text-white shadow-md">📅 週休自動割当</button>
-              <button onClick={resetWeeklyOff} className="btn-panel bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-2 border-indigo-600">週休割当リセット</button>
-              <button onClick={undo} disabled={undoCount === 0} className="btn-panel bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600">← 戻る</button>
-              <button onClick={redo} disabled={redoCount === 0} className="btn-panel bg-slate-500 hover:bg-slate-400 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-500 text-white border-2 border-slate-600">進む →</button>
-            </div>
-          </div>
         </div>
 
         {safeCalendar.length > 0 && (
           <CalendarSectionBoundary>
-          <div className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-6 shadow-sm">
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl">📆 当番表カレンダー</h3>
-            <div className="overflow-x-auto">
+          <div id="shift-calendar-print-area" className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-2 print:hidden">
+              <h3 className="font-bold text-stone-800 text-2xl">📆 当番表カレンダー</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={generateCalendar} className="btn-panel bg-amber-500 hover:bg-amber-400 text-stone-900 font-semibold shadow-md border-2 border-amber-600 shrink-0">📅 カレンダーを生成（職員も配置）</button>
+                <button onClick={() => autoAssign()} className="btn-panel bg-amber-400 hover:bg-amber-300 text-stone-800 font-semibold shadow-md border-2 border-amber-600 shrink-0">当番表を再配置</button>
+                <button type="button" onClick={() => window.history.back()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">← 戻る</button>
+                <button type="button" onClick={() => window.history.forward()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">進む →</button>
+                <button type="button" onClick={() => window.print()} className="btn-panel bg-slate-600 hover:bg-slate-500 text-white shadow-sm shrink-0">🖨️ A4縦で1枚印刷</button>
+              </div>
+            </div>
+            <div className="overflow-x-auto shift-calendar-print-content">
               <table className="w-full border-collapse table-fixed text-lg">
                 <colgroup>
                   <col style={{ width: '3.5rem' }} />
@@ -573,15 +618,15 @@ export default function ShiftScheduleScreen({ onBack }) {
                 </colgroup>
                 <thead>
                   <tr className="border-b border-slate-400 bg-slate-50">
-                    <th className="pl-0.5 pr-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">日付</th>
-                    <th className="pl-0 pr-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">曜日</th>
-                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">日勤</th>
-                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">サポート</th>
-                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">夜勤</th>
-                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">B</th>
-                    <th colSpan={2} className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">非番</th>
-                    <th className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white border-r border-slate-400">外科</th>
-                    <th className="px-0.5 py-2 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white">内科</th>
+                    <th className="pl-0.5 pr-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">日付</th>
+                    <th className="pl-0 pr-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">曜日</th>
+                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">日勤</th>
+                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">サポート</th>
+                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">夜勤</th>
+                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">B</th>
+                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">非番</th>
+                    <th className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white border-r border-slate-400 print:hidden">外科</th>
+                    <th className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white print:hidden">内科</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -591,10 +636,10 @@ export default function ShiftScheduleScreen({ onBack }) {
                     const daySchedule = schedule[day.date] || {};
                     const nextDay = safeCalendar[idx + 1];
                     const prevDay = safeCalendar[idx - 1];
-                    const nextNight = nextDay ? (schedule[nextDay.date]?.nightShift ?? schedule[nextDay.date]?.nightShiftManual) : null;
-                    const prevNight = prevDay ? (schedule[prevDay.date]?.nightShift ?? schedule[prevDay.date]?.nightShiftManual) : null;
-                    const bPerson = isSurgery && nextDay ? nextNight : (daySchedule.b ?? daySchedule.bManual);
-                    const dayOffPerson = prevNight ?? daySchedule.dayOff ?? daySchedule.dayOffManual;
+                    const nextNight = nextDay ? (schedule[nextDay.date]?.nightShiftManual ?? schedule[nextDay.date]?.nightShift) : null;
+                    const prevNight = prevDay ? (schedule[prevDay.date]?.nightShiftManual ?? schedule[prevDay.date]?.nightShift) : null;
+                    const bPerson = isSurgery && nextDay ? nextNight : (daySchedule.bManual ?? daySchedule.b);
+                    const dayOffPerson = prevNight ?? (daySchedule.dayOffManual ?? daySchedule.dayOff);
                     const name = (id) => (id ? (staffData.find(s => s.id === id)?.name || id) : '');
                     const yearNum = day.date && typeof day.date === 'string' && day.date.length >= 4 ? parseInt(day.date.slice(0, 4), 10) : NaN;
                     const isHoliday = day.isHoliday ?? (!isNaN(yearNum) && getHolidays(yearNum).has(day.date));
@@ -603,9 +648,9 @@ export default function ShiftScheduleScreen({ onBack }) {
                     const cellBg = isWeekendOrHoliday && !isSurgery && !isInternalMedicine ? 'bg-sky-100/50' : '';
                     const rowBorder = isSurgery ? 'border-l-4 border-l-amber-500' : (isInternalMedicine ? 'border-l-4 border-l-pink-500' : (isWeekendOrHoliday ? 'border-l-4 border-l-sky-400' : ''));
                     const borderR = 'border-r border-slate-300';
-                    const dayShiftDisp = daySchedule.dayShift ?? daySchedule.dayShiftManual;
-                    const supportDisp = daySchedule.support ?? daySchedule.supportManual;
-                    const nightShiftDisp = daySchedule.nightShift ?? daySchedule.nightShiftManual;
+                    const dayShiftDisp = daySchedule.dayShiftManual ?? daySchedule.dayShift;
+                    const supportDisp = daySchedule.supportManual ?? daySchedule.support;
+                    const nightShiftDisp = daySchedule.nightShiftManual ?? daySchedule.nightShift;
                     const ids = [dayShiftDisp, supportDisp, nightShiftDisp, bPerson].filter(Boolean);
                     const isOverlap = ids.length !== new Set(ids).size;
                     const overlapBg = isOverlap ? 'bg-slate-500' : '';
@@ -617,13 +662,13 @@ export default function ShiftScheduleScreen({ onBack }) {
                     const isBFromLeftEdit = isSurgery && nextDay && schedule[nextDay.date]?.nightShiftEdited;
                     const isDayOffFromLeftEdit = prevDay && schedule[prevDay.date]?.nightShiftEdited;
                     const manualBox = (field, value, hasAuto) => {
-                      if (!hasAuto) return <td className={`px-0.5 py-2 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`} />;
+                      if (!hasAuto) return <td className={`px-0.5 py-1 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`} />;
                       return (
-                        <td className={`px-0.5 py-2 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`}>
+                        <td className={`px-0.5 py-1 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`}>
                           <button
                             type="button"
                             onClick={() => setManualPicker({ date: day.date, field })}
-                            className={`w-full min-h-[1.75rem] rounded text-base font-medium bg-white/70 hover:bg-white/85 border border-slate-300/80 transition-all ${value ? 'text-red-600' : 'text-stone-500'}`}
+                            className={`w-full min-h-[1.5rem] rounded text-base font-medium bg-white/70 hover:bg-white/85 border border-slate-300/80 transition-all ${value ? 'text-red-600' : 'text-stone-500'}`}
                           >
                             {name(value) || ''}
                           </button>
@@ -631,11 +676,11 @@ export default function ShiftScheduleScreen({ onBack }) {
                       );
                     };
                     const autoEditCell = (field, displayValue, isFromManual = false) => (
-                      <td className={`px-0.5 py-2 text-center font-bold text-sm ${borderR} ${cellBg} ${overlapBg}`}>
+                      <td className={`px-0.5 py-1 text-center font-bold text-sm ${borderR} ${cellBg} ${overlapBg}`}>
                         <button
                           type="button"
                           onClick={() => { if (window.confirm('変えても良いですか？')) setEditPicker({ date: day.date, field }); }}
-                          className={`w-full min-h-[1.75rem] rounded text-base hover:bg-slate-200/60 transition-all cursor-pointer ${isFromManual ? 'text-red-600' : 'text-stone-800'}`}
+                          className={`w-full min-h-[1.5rem] rounded text-base hover:bg-slate-200/60 transition-all cursor-pointer ${isFromManual ? 'text-red-600' : 'text-stone-800'}`}
                         >
                           {name(displayValue) || ''}
                         </button>
@@ -643,8 +688,8 @@ export default function ShiftScheduleScreen({ onBack }) {
                     );
                     return (
                       <tr key={day.date} className={`border-b border-slate-400 transition-all ${rowBg} ${rowBorder}`}>
-                        <td className={`pl-0.5 pr-0.5 py-2 text-center text-stone-800 text-base border-r border-slate-400 ${cellBg}`}>{day.date}</td>
-                        <td className={`pl-0 pr-0.5 py-2 text-center font-bold text-base border-r border-slate-400 ${cellBg} ${isHoliday ? 'text-red-600' : isWeekendOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</td>
+                        <td className={`pl-0.5 pr-0.5 py-1 text-center text-stone-800 text-base border-r border-slate-400 ${cellBg}`}>{day.date}</td>
+                        <td className={`pl-0 pr-0.5 py-1 text-center font-bold text-base border-r border-slate-400 ${cellBg} ${isHoliday ? 'text-red-600' : isWeekendOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</td>
                         {autoEditCell('dayShift', daySchedule.dayShift, isDayShiftEdited)}
                         {manualBox('dayShiftManual', daySchedule.dayShiftManual, !!daySchedule.dayShift)}
                         {autoEditCell('support', daySchedule.support, isSupportEdited)}
@@ -655,10 +700,10 @@ export default function ShiftScheduleScreen({ onBack }) {
                         {manualBox('bManual', daySchedule.bManual, !!bPerson)}
                         {autoEditCell('dayOff', dayOffPerson ?? daySchedule.dayOff, isDayOffFromManual || isDayOffFromLeftEdit)}
                         {manualBox('dayOffManual', daySchedule.dayOffManual, !!dayOffPerson)}
-                        <td className={`px-0.5 py-2 text-center border-r border-slate-400 bg-white`}>
+                        <td className={`px-0.5 py-1 text-center border-r border-slate-400 bg-white print:hidden`}>
                           <button onClick={() => toggleSurgeryDay(day.date)} className={`min-w-[1.5rem] min-h-[1.5rem] rounded text-base font-semibold transition-all ${isSurgery ? 'bg-red-500 hover:bg-red-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isSurgery ? '✓' : '−'}</button>
                         </td>
-                        <td className="px-0.5 py-2 text-center bg-white">
+                        <td className="px-0.5 py-1 text-center bg-white print:hidden">
                           <button onClick={() => toggleInternalMedicineDay(day.date)} className={`min-w-[1.5rem] min-h-[1.5rem] rounded text-base font-semibold transition-all ${isInternalMedicine ? 'bg-pink-500 hover:bg-pink-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isInternalMedicine ? '✓' : '−'}</button>
                         </td>
                       </tr>
@@ -667,10 +712,19 @@ export default function ShiftScheduleScreen({ onBack }) {
                 </tbody>
               </table>
             </div>
-            <div className="mt-3 text-base text-stone-600">※日勤・サポート・夜勤・B・非番は1列目＝自動、2列目＝手動変更（自動で人が入っている隣のボックスをクリックで職員選択）。土日祝は曜日を赤表示し、祝日にも日勤・サポートを自動割当します。外科輪番・内科輪番はボタンで指定。Bは外科輪番の日に翌日夜勤、非番は前日夜勤の担当者を自動表示します。<br />配置表作成では<strong>1列目（左・自動）を優先</strong>して参照し、1列目が空のときだけ2列目（右・手動）を参照します。</div>
+            <div className="print:hidden">
+            <div className="mt-2 text-base text-stone-600">※日勤・サポート・夜勤・B・非番は1列目＝自動、2列目＝手動変更（自動で人が入っている隣のボックスをクリックで職員選択）。土日祝は曜日を赤表示し、祝日にも日勤・サポートを自動割当します。外科輪番・内科輪番はボタンで指定。Bは外科輪番の日に翌日夜勤、非番は前日夜勤の担当者を自動表示します。<br />当番表では<strong>2列目（右・手動）を最初に参照</strong>し、入力がなければ1列目（左・自動）を参照します。夜勤の右セルを変更すると、翌日の非番の右セルにも同じ職員が入ります。<br />配置表作成では当番表の参照順（右→左）に従って参照します。</div>
 
-            <h3 className="font-bold mb-3 text-stone-800 text-2xl mt-8">📋 週休割り当て結果</h3>
-            <p className="text-sm text-stone-600 mb-2">縦＝職員（夜勤順番リスト順）、横＝日付。A＝日勤、16＝夜勤（暗ピンク）、B＝青、非番＝オレンジ、黄色＝週休または土日祝で勤務なし。</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 mt-4 mb-2">
+              <h3 className="font-bold text-stone-800 text-2xl">📋 週休割り当て結果</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={autoAssignWeeklyOff} className="btn-panel bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shrink-0">📅 週休自動割当</button>
+                <button onClick={resetWeeklyOff} className="btn-panel bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-2 border-indigo-600 shrink-0">週休割当リセット</button>
+                <button type="button" onClick={() => window.history.back()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">← 戻る</button>
+                <button type="button" onClick={() => window.history.forward()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">進む →</button>
+              </div>
+            </div>
+            <p className="text-sm text-stone-600 mb-1">縦＝職員（夜勤順番リスト順）、横＝日付。A＝日勤、16＝夜勤（暗ピンク）、B＝青、非番＝オレンジ、黄色＝週休または土日祝で勤務なし。</p>
             <div className="overflow-x-auto border border-slate-400 rounded-xl">
               <table className="w-full border-collapse text-sm table-fixed" style={{ minWidth: `${safeCalendar.length * 2.5 + 9}rem` }}>
                 <colgroup>
@@ -678,7 +732,7 @@ export default function ShiftScheduleScreen({ onBack }) {
                 </colgroup>
                 <thead>
                   <tr className="border-b border-slate-400 bg-slate-100">
-                    <th className="sticky left-0 z-10 w-[9rem] min-w-[9rem] px-2 py-2 text-left text-stone-600 font-semibold bg-slate-100 border-r border-slate-400">職員</th>
+                    <th className="sticky left-0 z-10 w-[9rem] min-w-[9rem] px-2 py-1 text-left text-stone-600 font-semibold bg-slate-100 border-r border-slate-400">職員</th>
                     {safeCalendar.map((day) => {
                       const y = day.date && day.date.length >= 4 ? parseInt(day.date.slice(0, 4), 10) : NaN;
                       const isHoliday = !isNaN(y) && getHolidays(y).has(day.date);
@@ -696,61 +750,41 @@ export default function ShiftScheduleScreen({ onBack }) {
                   {nightShiftOrder.map((staffId) => {
                     const staff = staffData.find(s => s.id === staffId);
                     if (!staff) return null;
-                    let weeklyOffDays = 0;
-                    safeCalendar.forEach((day, idx) => {
-                      const dateStr = day.date;
-                      const daySchedule = schedule[dateStr] || {};
-                      const nextDay = safeCalendar[idx + 1];
-                      const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift ?? schedule[nextDay.date]?.nightShiftManual) : (daySchedule.b ?? daySchedule.bManual);
-                      const onNight = daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId;
-                      const onDay = daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId;
-                      const onSupport = daySchedule.support === staffId || daySchedule.supportManual === staffId;
-                      const onB = bPerson === staffId || daySchedule.bManual === staffId;
-                      if (day.dayOfWeekNum === 5 && onNight) weeklyOffDays += 1;
-                      if (day.dayOfWeekNum === 6 && onNight) weeklyOffDays += 2;
-                      if (day.dayOfWeekNum === 6 && (onDay || onSupport)) weeklyOffDays += 1;
-                      if (day.dayOfWeekNum === 0 && (onDay || onSupport)) weeklyOffDays += 1;
-                      if (day.dayOfWeekNum === 0 && onNight) weeklyOffDays += 1;
-                      if ((day.dayOfWeekNum === 6 || day.dayOfWeekNum === 0) && onB) weeklyOffDays += 1;
-                    });
+                    const weeklyOffDays = calcWeeklyOffDaysForStaff(staffId, safeCalendar, schedule, surgeryDays);
                     return (
                       <tr key={staffId} className="border-b border-slate-300">
                         <td className="sticky left-0 z-10 w-[9rem] min-w-[9rem] px-2 py-1 text-stone-800 font-medium bg-slate-50 border-r border-slate-400 whitespace-nowrap overflow-visible">{staff.name} <span className="text-stone-500 font-normal">({weeklyOffDays})</span></td>
                         {safeCalendar.map((day, idx) => {
                           const dateStr = day.date;
-                          const daySchedule = schedule[dateStr] || {};
-                          const nextDay = safeCalendar[idx + 1];
-                          const prevDay = safeCalendar[idx - 1];
-                          const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay.date]?.nightShift) : (daySchedule.b);
-                          const dayOffPerson = prevDay && prevDay.date ? (schedule[prevDay.date]?.nightShift) : null;
+                          const eff = getEffectiveScheduleForDay(schedule, dateStr, safeCalendar, idx, surgeryDays);
                           const y = dateStr && dateStr.length >= 4 ? parseInt(dateStr.slice(0, 4), 10) : NaN;
                           const isHoliday = !isNaN(y) && getHolidays(y).has(dateStr);
                           const isWeekendOrHoliday = day.isWeekend || isHoliday;
                           let label = '';
                           let cellClass = 'px-0.5 py-1 text-center border-r border-slate-200';
-                          if (daySchedule.dayShift === staffId) {
+                          if (eff.dayShift === staffId) {
                             label = 'A';
                             cellClass += ' bg-emerald-100 text-stone-800';
-                          } else if (daySchedule.support === staffId) {
+                          } else if (eff.support === staffId) {
                             label = 'S';
                             cellClass += ' bg-emerald-50 text-stone-700';
-                          } else if (daySchedule.nightShift === staffId) {
+                          } else if (eff.nightShift === staffId) {
                             label = '16';
                             cellClass += ' bg-rose-800 text-white';
-                          } else if (bPerson === staffId) {
+                          } else if (eff.b === staffId) {
                             label = 'B';
                             cellClass += ' bg-blue-600 text-white';
-                          } else if (dayOffPerson === staffId) {
+                          } else if (eff.dayOff === staffId) {
                             label = '非番';
                             cellClass += ' bg-orange-400 text-white';
-                          } else if (weeklyOff[dateStr]?.includes(staffId)) {
+                          } else if (getWeeklyOffIds(weeklyOff, dateStr).includes(staffId)) {
                             label = '週休';
                             cellClass += ' bg-yellow-300 text-stone-800';
                           } else if (isWeekendOrHoliday) {
                             label = '';
                             cellClass += ' bg-yellow-300 text-stone-800';
                           }
-                          const isWeeklyOffCell = weeklyOff[dateStr]?.includes(staffId);
+                          const isWeeklyOffCell = getWeeklyOffIds(weeklyOff, dateStr).includes(staffId);
                           const handleDrop = (e) => {
                             e.preventDefault();
                             const raw = e.dataTransfer.getData('text/plain');
@@ -781,26 +815,97 @@ export default function ShiftScheduleScreen({ onBack }) {
             </div>
             <div className="mt-4 p-4 bg-slate-100/80 rounded-xl border border-slate-300 text-stone-700 text-sm space-y-2">
               <h4 className="font-bold text-stone-800 text-base">週休を割り当てるルール</h4>
+              <p className="text-stone-600 text-xs mt-0.5 mb-1">※当番の判定は「右（手動）を優先、空なら左（自動）」で統一しています。</p>
               <p className="font-semibold text-stone-700">【付与する週休の日数】</p>
+              <p className="text-stone-600 text-xs mb-0.5">土日祝の勤務に応じて加算（勤務がない日は付与対象外）</p>
               <ul className="list-disc list-inside ml-2 space-y-0.5">
                 <li>金曜の夜勤 … +1日</li>
                 <li>土曜の夜勤 … +2日</li>
                 <li>土曜の日勤・サポート … +1日</li>
                 <li>日曜の日勤・サポート … +1日</li>
                 <li>日曜の夜勤 … +1日</li>
-                <li>土日のB … +1日</li>
+                <li>土日のB … 各+1日（土と日でそれぞれ）</li>
               </ul>
               <p className="font-semibold text-stone-700 mt-2">【割り当て先】</p>
               <ul className="list-disc list-inside ml-2 space-y-0.5">
                 <li>平日のみ（土日祝は割り当て先にしない）</li>
-                <li>期間全体でバランスをとり、1日あたりの週休人数が偏らないように割り当てる（配置表で必要人数を満たしやすくするため。不足する場合は週休の割り当てを変更して調整）</li>
+                <li>期間全体でバランスをとり、1日あたりの週休人数が偏らないように割り当てる</li>
               </ul>
               <p className="font-semibold text-stone-700 mt-2">【週休を割り当てない日】</p>
               <ul className="list-disc list-inside ml-2 space-y-0.5">
                 <li>その日に休暇入力がある日</li>
-                <li>その日に当番表で勤務が入っている日（日勤・サポート・夜勤・B・非番のいずれか。手動変更も含む）</li>
+                <li>その日に当番表で勤務が入っている日（有効当番で夜勤・日勤・サポート・B・非番のいずれか）</li>
               </ul>
               <p className="text-stone-600 mt-2">※土日祝で勤務が当たっていない日は黄色で表示しますが、付与する週休の日数には含めません。</p>
+            </div>
+
+            {/* 配置表（前バージョンと同様：作成ボタンのあと「配置表を開く」で別画面に表示） */}
+            <div id="allocation-section" className="mt-6 pt-6 border-t-2 border-stone-300">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <h3 className="font-bold text-stone-800 text-2xl">📊 配置表</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={allocationRunning || calendar.length === 0}
+                    onClick={async () => {
+                      const modalityData = Array.isArray(rawModalityData) ? rawModalityData : [];
+                      const staffDataArr = Array.isArray(rawStaffData) ? rawStaffData : [];
+                      if (calendar.length === 0) {
+                        alert('⚠️ まず「カレンダーを生成（職員も配置）」を押して当番表を作成してください');
+                        return;
+                      }
+                      if (modalityData.length === 0) {
+                        alert('⚠️ モダリティが登録されていません。');
+                        return;
+                      }
+                      if (staffDataArr.length === 0) {
+                        alert('⚠️ 職員が登録されていません。');
+                        return;
+                      }
+                      setAllocationRunning(true);
+                      try {
+                        const { allocation: newAllocation, alertMessage } = runAllocationForCalendar(calendar, modalityData, staffDataArr);
+                        if (newAllocation != null) {
+                          const startDateVal = /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : '';
+                          const endDateVal = /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : '';
+                          localStorage.setItem('allocationData', JSON.stringify({ allocation: newAllocation, startDate: startDateVal, endDate: endDateVal }));
+                          setAllocation(newAllocation);
+                        }
+                        alert(alertMessage);
+                      } finally {
+                        setAllocationRunning(false);
+                      }
+                    }}
+                    className="min-h-[44px] px-5 py-2.5 rounded-xl text-base font-semibold bg-blue-600 hover:bg-blue-500 disabled:opacity-70 disabled:cursor-not-allowed text-white border-2 border-blue-700 shadow-sm"
+                  >
+                    {allocationRunning ? '配置中...' : '配置表作成'}
+                  </button>
+                  {typeof onNavigate === 'function' && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('allocation')}
+                      className="min-h-[44px] px-5 py-2.5 rounded-xl text-base font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-2 border-emerald-700 shadow-sm"
+                    >
+                      配置表を開く
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-stone-600 mb-3">
+                「配置表作成」で自動作成・保存します。同じアルゴリズムで職員を割り振り、下に表を表示します。編集は「配置表を開く」で別画面から行えます。
+              </p>
+              {safeCalendar.length > 0 && (
+                <AllocationTableView
+                  allocation={allocation}
+                  modalityData={Array.isArray(rawModalityData) ? rawModalityData : []}
+                  staffData={staffData}
+                  safeCalendar={safeCalendar}
+                  schedule={schedule}
+                  weeklyOff={weeklyOff}
+                  surgeryDays={surgeryDays}
+                />
+              )}
+            </div>
             </div>
           </div>
           </CalendarSectionBoundary>

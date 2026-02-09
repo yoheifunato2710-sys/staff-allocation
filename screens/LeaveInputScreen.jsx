@@ -202,15 +202,14 @@ export default function LeaveInputScreen({ onBack }) {
     return counts;
   }, [leaveData, yearForCounts]);
 
-  /** 入力した職員一覧をすべて表示し、右に年休・リフ休の年間総カウント */
+  /** 職員情報一覧と同じ順・表記で一覧表示し、右に年休・リフ休の年間総カウント */
   const staffListWithCounts = useMemo(() => {
-    return [...staffData]
-      .sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }))
-      .map(s => ({
-        staff: s,
-        年休: staffLeaveCounts[s.id]?.年休 ?? 0,
-        リフ休: staffLeaveCounts[s.id]?.リフ休 ?? 0
-      }));
+    return staffData.map((staff, index) => ({
+      staff,
+      index: index + 1,
+      年休: staffLeaveCounts[staff.id]?.年休 ?? 0,
+      リフ休: staffLeaveCounts[staff.id]?.リフ休 ?? 0
+    }));
   }, [staffData, staffLeaveCounts]);
 
   return (
@@ -234,13 +233,18 @@ export default function LeaveInputScreen({ onBack }) {
               {staffListWithCounts.length === 0 ? (
                 <p className="text-stone-600 text-base">職員が登録されていません（職員情報入力で登録）</p>
               ) : (
-                <div className="space-y-2.5 overflow-y-auto max-h-[70vh] pr-1">
-                  {staffListWithCounts.map(({ staff, 年休, リフ休 }) => (
-                    <div key={staff.id} className="bg-white rounded-lg border border-slate-300 p-3 text-base flex items-center justify-between gap-3">
-                      <span className="font-semibold text-stone-900 truncate min-w-0">{staff.name}</span>
-                      <div className="flex gap-4 shrink-0 text-stone-700 font-medium">
-                        <span>年休 <strong className="text-stone-900">{年休}</strong>日</span>
-                        <span>リフ休 <strong className="text-stone-900">{リフ休}</strong>日</span>
+                <div className="space-y-1 overflow-y-auto max-h-[70vh] pr-1">
+                  {staffListWithCounts.map(({ staff, index, 年休, リフ休 }) => (
+                    <div key={staff.id} className="rounded-lg border-2 border-slate-400 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-500 overflow-hidden shadow-sm">
+                      <div className="flex items-center gap-1.5 px-2 py-1.5 flex-wrap">
+                        <span className="text-stone-700 text-sm font-semibold w-5 shrink-0">{index}</span>
+                        <span className="flex-1 min-w-0 font-semibold text-stone-900 text-base truncate">{staff.name}</span>
+                        {staff.isPartTime ? <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">{staff.partTimeSlot === 'am_pm' ? 'AM＆PM' : staff.partTimeSlot === 'am' ? 'AM' : 'PM'}</span> : null}
+                        {staff.position ? <span className="text-stone-600 text-xs shrink-0 truncate max-w-[100px]">{staff.position}</span> : null}
+                        <div className="flex gap-4 shrink-0 text-stone-700 font-medium ml-auto">
+                          <span>年休 <strong className="text-stone-900">{年休}</strong>日</span>
+                          <span>リフ休 <strong className="text-stone-900">{リフ休}</strong>日</span>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -344,7 +348,7 @@ export default function LeaveInputScreen({ onBack }) {
                   <label className="block text-base mb-2 font-semibold text-stone-700 uppercase tracking-wider">職員を選択 *</label>
                   <select value={selectedStaff} onChange={(e) => setSelectedStaff(e.target.value)} className="w-full p-3 bg-stone-50 border-2 border-slate-400 rounded-xl text-stone-800 focus:border-rose-400 focus:ring-2 focus:ring-rose-100 outline-none transition-all">
                     <option value="">-- 職員を選択 --</option>
-                    {staffData.map(s => (<option key={s.id} value={s.id}>{s.name} ({s.id})</option>))}
+                    {staffData.map((s, i) => (<option key={s.id} value={s.id}>{i + 1}. {s.name}</option>))}
                   </select>
                 </div>
                 <div>

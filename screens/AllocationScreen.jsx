@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, Component } from 'react';
 import { useData } from '../context/DataContext';
+import { INITIAL_MODALITY } from '../constants/initialModality';
+
+/** プリセット（INITIAL_MODALITY）に含まれるIDかどうか。含まれなければ自分で作成したモダリティ */
+const INITIAL_MODALITY_IDS = new Set((INITIAL_MODALITY || []).map(m => m.id));
+function isUserCreatedModality(mod) {
+  return mod && !INITIAL_MODALITY_IDS.has(mod.id);
+}
 
 /** 配置表の表部分だけを囲む。落ちても「配置表作成」ボタンは押せるようにする */
 class TableErrorBoundary extends Component {
@@ -157,6 +164,7 @@ function setUnassignedAmPmFromSlots(newAllocation, dateStr, modalityData, staffD
     if (s && !Array.isArray(s)) {
       (s.am || []).forEach(id => inAnyAm.add(id));
       (s.pm || []).forEach(id => inAnyPm.add(id));
+      if (isUserCreatedModality(mod)) (s.extra || []).forEach(id => { inAnyAm.add(id); inAnyPm.add(id); });
     }
   });
   const available = staffData.filter(s => !unavailableAtStart.has(s.id)).map(s => s.id);
@@ -627,10 +635,51 @@ export function runAllocationForCalendar(calendar, modalityData, staffData) {
 }
 
 /**
- * 配置表の表示のみ（読み取り専用）。当番表画面の下に同じ表を表示する用。
+ * 週休を別日に移動したときの新しい weeklyOff を返す。無効なら null。
+ */
+export function computeWeeklyOffAfterMove(weeklyOff, staffId, fromDate, toDate, fromSlot, toSlot, { schedule, calendar, surgeryDays, leaves }) {
+  const day = calendar.find(d => d.date === toDate);
+  if (!day || day.isWeekend || day.isHoliday) return null;
+  const hasOtherLeave = (leaves[toDate] || []).some(leave => leave.staffId === staffId);
+  const daySchedule = schedule[toDate] || {};
+  const calIdx = calendar.findIndex(d => d.date === toDate);
+  const nextDay = calIdx >= 0 ? calendar[calIdx + 1] : null;
+  const prevDay = calIdx >= 0 ? calendar[calIdx - 1] : null;
+  const bPerson = surgeryDays.includes(toDate) && nextDay ? (schedule[nextDay?.date]?.nightShiftManual ?? schedule[nextDay?.date]?.nightShift) : (daySchedule.bManual ?? daySchedule.b);
+  const dayOffPerson = prevDay ? (schedule[prevDay.date]?.nightShiftManual ?? schedule[prevDay.date]?.nightShift) : (daySchedule.dayOffManual ?? daySchedule.dayOff);
+  const isAssigned =
+    daySchedule.nightShift === staffId || daySchedule.nightShiftManual === staffId ||
+    daySchedule.dayShift === staffId || daySchedule.dayShiftManual === staffId ||
+    daySchedule.support === staffId || daySchedule.supportManual === staffId ||
+    (daySchedule.bManual ?? daySchedule.b ?? bPerson) === staffId ||
+    (daySchedule.dayOffManual ?? daySchedule.dayOff ?? dayOffPerson) === staffId;
+  if (hasOtherLeave || isAssigned) return null;
+  const fromKey = fromSlot === 'pm' ? 'pm' : 'am';
+  const toKey = toSlot === 'pm' ? 'pm' : 'am';
+  const next = {};
+  Object.keys(weeklyOff || {}).forEach(k => {
+    const { am, pm } = getWeeklyOffBySlot(weeklyOff, k);
+    next[k] = { am: [...am], pm: [...pm] };
+  });
+  const fromSlotData = getWeeklyOffBySlot(weeklyOff, fromDate);
+  next[fromDate] = {
+    am: fromSlotData.am.filter(id => id !== staffId),
+    pm: fromSlotData.pm.filter(id => id !== staffId)
+  };
+  if (next[fromDate].am.length === 0 && next[fromDate].pm.length === 0) delete next[fromDate];
+  const toSlotData = getWeeklyOffBySlot(weeklyOff, toDate);
+  if (!next[toDate]) next[toDate] = { am: [...(toSlotData.am || [])], pm: [...(toSlotData.pm || [])] };
+  const arr = next[toDate][toKey] || [];
+  if (!arr.includes(staffId)) next[toDate][toKey] = [...arr, staffId];
+  return normalizeWeeklyOffForSave(next);
+}
+
+/**
+ * 配置表の表示。editable=true のとき setAllocation, setWeeklyOff を渡すと D&D で編集可能。
  * allocation, modalityData, staffData, safeCalendar, schedule, weeklyOff, surgeryDays を渡す。
  */
-export function AllocationTableView({ allocation = {}, modalityData = [], staffData = [], safeCalendar = [], schedule = {}, weeklyOff = {}, surgeryDays = [] }) {
+export function AllocationTableView({ allocation = {}, modalityData = [], staffData = [], safeCalendar = [], schedule = {}, weeklyOff = {}, surgeryDays = [], editable = false, setAllocation: setAllocationProp, setWeeklyOff: setWeeklyOffProp }) {
+  const [assignPicker, setAssignPicker] = React.useState(null);
   const leaves = (() => {
     try {
       const raw = localStorage.getItem('leaveData');
@@ -673,6 +722,7 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
           if (slot && !Array.isArray(slot)) {
             (slot.am || []).forEach(id => amList.push(id));
             (slot.pm || []).forEach(id => pmList.push(id));
+            if (isUserCreatedModality(mod) && (slot.extra || []).length) (slot.extra || []).forEach(id => { amList.push(id); pmList.push(id); });
           }
         });
         const countAm = {};
@@ -710,6 +760,112 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
     if (bPersonByDate[dateStr] === id) return false;
     return (duplicateInAMByDate[dateStr]?.has(id) || duplicateInPMByDate[dateStr]?.has(id)) ?? false;
   };
+
+  const moveAllocationStaff = editable && setAllocationProp ? (dateStr, staffId, fromSource, toTarget) => {
+    setAllocationProp(prev => {
+      const next = JSON.parse(JSON.stringify(prev));
+      if (!next[dateStr]) return prev;
+      const day = next[dateStr];
+      if (!day._manualSlots) day._manualSlots = [];
+      const removeFrom = (src) => {
+        if (src.type === 'unassigned') {
+          const slotKey = src.slot === 'pm' ? '_unassignedPm' : '_unassignedAm';
+          const fallback = day._unassigned;
+          if (day[slotKey]) day[slotKey] = day[slotKey].filter(id => id !== staffId);
+          else if (fallback) day._unassigned = fallback.filter(id => id !== staffId);
+        } else {
+          const slot = day[src.modId];
+          if (slot && !Array.isArray(slot)) {
+            if (src.slot === 'am' && slot.am) slot.am = slot.am.filter(id => id !== staffId);
+            if (src.slot === 'pm' && slot.pm) slot.pm = slot.pm.filter(id => id !== staffId);
+            if (src.slot === 'extra' && slot.extra) slot.extra = slot.extra.filter(id => id !== staffId);
+          }
+        }
+      };
+      const addTo = (tgt) => {
+        if (tgt.type === 'unassigned') {
+          const slotKey = tgt.slot === 'pm' ? '_unassignedPm' : '_unassignedAm';
+          if (!day[slotKey]) day[slotKey] = [];
+          if (!day[slotKey].includes(staffId)) day[slotKey].push(staffId);
+        } else {
+          if (!day[tgt.modId]) day[tgt.modId] = { am: [], pm: [] };
+          const slot = day[tgt.modId];
+          if (Array.isArray(slot)) return;
+          if (tgt.slot === 'am' && !(slot.am || []).includes(staffId)) slot.am = [...(slot.am || []), staffId];
+          if (tgt.slot === 'extra' && !(slot.extra || []).includes(staffId)) slot.extra = [...(slot.extra || []), staffId];
+          if (tgt.slot === 'pm') {
+            const mod = modalityData.find(m => m.id === tgt.modId || m.id === parseInt(tgt.modId, 10));
+            const isKyukyuPm = mod?.name === '救命(日勤)';
+            let bPerson = null;
+            if (isKyukyuPm) {
+              const idx = cal.findIndex(d => d.date === dateStr);
+              const nextDay = cal[idx + 1];
+              const daySched = schedule[dateStr] || {};
+              bPerson = surgeryDays.includes(dateStr) && nextDay
+                ? (schedule[nextDay?.date]?.nightShiftManual ?? schedule[nextDay?.date]?.nightShift)
+                : (daySched.bManual ?? daySched.b);
+            }
+            if (isKyukyuPm && bPerson === staffId) {
+              const prevPm = [...(slot.pm || [])];
+              slot.pm = [staffId];
+              prevPm.filter(id => id !== staffId).forEach(id => {
+                if (!day._unassignedPm) day._unassignedPm = [];
+                if (!day._unassignedPm.includes(id)) day._unassignedPm.push(id);
+                if (slot.am) slot.am = slot.am.filter(x => x !== id);
+              });
+            } else if (!(slot.pm || []).includes(staffId)) {
+              slot.pm = [...(slot.pm || []), staffId];
+            }
+          }
+        }
+      };
+      removeFrom(fromSource);
+      addTo(toTarget);
+      const slotKey = toTarget.type === 'unassigned' ? '_unassigned' : toTarget.modId;
+      const slotVal = toTarget.slot;
+      if (!day._manualSlots.some(m => m.staffId === staffId && m.modId == slotKey && m.slot === slotVal)) {
+        day._manualSlots.push({ staffId, modId: slotKey, slot: slotVal });
+      }
+      return next;
+    });
+  } : null;
+
+  const isManualSlot = (dateStr, staffId, modId, slot) => {
+    const list = allocation[dateStr]?._manualSlots || allocation[dateStr]?._manualStaff;
+    if (!list) return false;
+    if (Array.isArray(list) && list.length > 0 && typeof list[0] === 'object' && list[0].staffId != null) {
+      return list.some(m => m.staffId === staffId && m.modId == modId && m.slot === slot);
+    }
+    return false;
+  };
+
+  const moveWeeklyOffAllocation = editable && setWeeklyOffProp ? (staffId, fromDate, toDate, fromSlot, toSlot) => {
+    const next = computeWeeklyOffAfterMove(weeklyOff, staffId, fromDate, toDate, fromSlot, toSlot, { schedule, calendar: cal, surgeryDays, leaves });
+    if (next) setWeeklyOffProp(next);
+  } : null;
+
+  const getAssignableUnassigned = editable ? (dateStr, slot) => {
+    const idx = cal.findIndex(d => d.date === dateStr);
+    const nextDay = cal[idx + 1];
+    const daySched = schedule[dateStr] || {};
+    const bPerson = surgeryDays.includes(dateStr) && nextDay ? (schedule[nextDay?.date]?.nightShiftManual ?? schedule[nextDay?.date]?.nightShift) : (daySched.bManual ?? daySched.b);
+    const scheduleStaffThisDay = new Set([
+      daySched.dayShiftManual ?? daySched.dayShift,
+      daySched.supportManual ?? daySched.support,
+      daySched.nightShiftManual ?? daySched.nightShift,
+      bPerson,
+      daySched.dayOffManual ?? daySched.dayOff,
+      ...getWeeklyOffMerged(weeklyOff, dateStr),
+      ...(leaves[dateStr] || []).map(l => l.staffId)
+    ].filter(Boolean));
+    const rawIds = slot === 'pm'
+      ? (allocation[dateStr]?._unassignedPm ?? allocation[dateStr]?._unassigned ?? [])
+      : (allocation[dateStr]?._unassignedAm ?? allocation[dateStr]?._unassigned ?? []);
+    return rawIds.filter(id => !scheduleStaffThisDay.has(id));
+  } : null;
+  const getAssignableForSlot = (dateStr, slot) => getAssignableUnassigned(dateStr, slot === 'extra' ? 'am' : slot);
+  const hasUserCreatedMod = (modalityData || []).some(m => isUserCreatedModality(m));
+
   if (cal.length === 0) return null;
   const scheduleRows = [
     { key: 'dayShift', label: '日勤者', getVal: (d) => (schedule[d.date]?.dayShiftManual ?? schedule[d.date]?.dayShift) || null },
@@ -740,19 +896,21 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
     return byType.length ? byType.join('、') : null;
   };
   return (
+  <React.Fragment>
     <div className="overflow-x-auto border border-slate-400 rounded-xl bg-white">
       <table className="border-collapse text-sm min-w-full">
         <thead>
           <tr className="bg-stone-100 border-b-2 border-slate-400">
-            <th className="border border-slate-300 p-1 sticky left-0 bg-stone-100 z-20 min-w-[110px] text-stone-800 font-bold">モダリティ</th>
+            <th className="border border-slate-300 p-0.5 sticky left-0 bg-stone-100 z-20 min-w-[110px] text-stone-800 font-bold">モダリティ</th>
             {cal.map(day => {
               const dow = day.dayOfWeekNum ?? new Date(day.date + 'T12:00:00').getDay();
               const isSunOrHoliday = dow === 0 || day.isHoliday;
               const isSat = dow === 6;
               const dateColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-800';
               const weekdayColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-600';
+              const dayColSpan = hasUserCreatedMod ? 3 : 2;
               return (
-                <th key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
+                <th key={day.date} colSpan={dayColSpan} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
                   <div className={`font-semibold ${dateColor}`}>{(day.date || '').slice(5).replace('-', '/')}</div>
                   <div className={`text-xs ${weekdayColor}`}>{day.dayOfWeek}</div>
                 </th>
@@ -765,6 +923,7 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
               <React.Fragment key={day.date}>
                 <th className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-amber-50/80 ${dayColumnDupBg(day.date)}`}>AM</th>
                 <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-sky-50/80 ${dayColumnDupBg(day.date)}`}>PM</th>
+                {hasUserCreatedMod && <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-emerald-50/80 ${dayColumnDupBg(day.date)}`}>追加</th>}
               </React.Fragment>
             ))}
           </tr>
@@ -772,34 +931,142 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
         <tbody>
           {(modalityData || []).map(mod => (
             <tr key={mod.id} className="hover:bg-slate-50/50">
-              <td className="border border-slate-300 p-1 sticky left-0 bg-slate-50 z-10 font-semibold text-stone-800 align-top">{mod.name}</td>
+              <td className="border border-slate-300 p-0.5 sticky left-0 bg-slate-50 z-10 font-semibold text-stone-800 align-top">{mod.name}</td>
               {cal.map(day => {
                 const dateStr = day.date;
                 const slot = allocation[dateStr]?.[mod.id];
                 const am = Array.isArray(slot) ? slot : (slot?.am || []);
                 const pm = Array.isArray(slot) ? [] : (slot?.pm || []);
+                const extra = isUserCreatedModality(mod) ? (Array.isArray(slot) ? [] : (slot?.extra || [])) : [];
                 const isWeekend = day.isWeekend || day.isHoliday;
                 const { requiredAm, requiredPm } = getRequiredForModality(mod, dateStr);
                 const isShortAm = !isWeekend && am.length < requiredAm;
                 const isShortPm = !isWeekend && pm.length < requiredPm;
                 const cellBgAm = isShortAm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-amber-50/30';
                 const cellBgPm = isShortPm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-sky-50/30';
+                const cellBgExtra = isWeekend ? 'bg-slate-50' : 'bg-emerald-50/30';
+                const handleDropAm = (editable && moveAllocationStaff) ? (e) => {
+                  e.preventDefault();
+                  const raw = e.dataTransfer.getData('text/plain');
+                  if (!raw) return;
+                  try {
+                    const data = JSON.parse(raw);
+                    if (data.type !== 'allocation-staff' || data.dateStr !== dateStr) return;
+                    const to = { type: 'modality', modId: mod.id, slot: 'am' };
+                    if (data.fromSource.type === to.type && data.fromSource.modId === to.modId && data.fromSource.slot === to.slot) return;
+                    moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
+                  } catch (_) {}
+                } : undefined;
+                const handleDropPm = (editable && moveAllocationStaff) ? (e) => {
+                  e.preventDefault();
+                  const raw = e.dataTransfer.getData('text/plain');
+                  if (!raw) return;
+                  try {
+                    const data = JSON.parse(raw);
+                    if (data.type !== 'allocation-staff' || data.dateStr !== dateStr) return;
+                    const to = { type: 'modality', modId: mod.id, slot: 'pm' };
+                    if (data.fromSource.type === to.type && data.fromSource.modId === to.modId && data.fromSource.slot === to.slot) return;
+                    moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
+                  } catch (_) {}
+                } : undefined;
+                const handleDropExtra = isUserCreatedModality(mod) && (editable && moveAllocationStaff) ? (e) => {
+                  e.preventDefault();
+                  const raw = e.dataTransfer.getData('text/plain');
+                  if (!raw) return;
+                  try {
+                    const data = JSON.parse(raw);
+                    if (data.type !== 'allocation-staff' || data.dateStr !== dateStr) return;
+                    const to = { type: 'modality', modId: mod.id, slot: 'extra' };
+                    if (data.fromSource.type === to.type && data.fromSource.modId === to.modId && data.fromSource.slot === to.slot) return;
+                    moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
+                  } catch (_) {}
+                } : undefined;
+                const openAssignPickerExtra = () => isUserCreatedModality(mod) && setAssignPicker({ dateStr, modId: mod.id, slot: 'extra' });
                 return (
                   <React.Fragment key={day.date}>
-                    <td className={`border border-slate-300 border-l-2 border-l-slate-600 p-1 min-w-[6rem] align-top text-sm ${cellBgAm} ${dayColumnDupBg(dateStr)}`}>
-                      <div className="flex flex-col gap-0.5 min-h-[1.75rem]">
+                    <td
+                      className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[6rem] align-top text-sm ${cellBgAm} ${dayColumnDupBg(dateStr)}`}
+                      onDragOver={editable ? (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; } : undefined}
+                      onDrop={editable ? handleDropAm : undefined}
+                    >
+                      <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
                         {am.length ? [...am].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                          <span key={id} className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : 'text-stone-800'}`} title={name(id)}>{name(id)}</span>
-                        )) : <span className="text-stone-400">－</span>}
+                          <span
+                            key={id}
+                            draggable={editable}
+                            className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'am') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                            title={name(id)}
+                            onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'am' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                          >{name(id)}</span>
+                        )) : editable ? (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
+                            onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'am' })}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'am' }); } }}
+                          >－</span>
+                        ) : (
+                          <span className="text-stone-400">－</span>
+                        )}
                       </div>
                     </td>
-                    <td className={`border border-slate-300 p-1 min-w-[6rem] align-top text-sm ${cellBgPm} ${dayColumnDupBg(dateStr)}`}>
-                      <div className="flex flex-col gap-0.5 min-h-[1.75rem]">
+                    <td
+                      className={`border border-slate-300 p-0.5 min-w-[6rem] align-top text-sm ${cellBgPm} ${dayColumnDupBg(dateStr)}`}
+                      onDragOver={editable ? (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; } : undefined}
+                      onDrop={editable ? handleDropPm : undefined}
+                    >
+                      <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
                         {pm.length ? [...pm].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                          <span key={id} className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : 'text-stone-800'}`} title={name(id)}>{name(id)}</span>
-                        )) : <span className="text-stone-400">－</span>}
+                          <span
+                            key={id}
+                            draggable={editable}
+                            className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'pm') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                            title={name(id)}
+                            onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'pm' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                          >{name(id)}</span>
+                        )) : editable ? (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
+                            onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' })}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' }); } }}
+                          >－</span>
+                        ) : (
+                          <span className="text-stone-400">－</span>
+                        )}
                       </div>
                     </td>
+                    {hasUserCreatedMod && (
+                      <td
+                        className={`border border-slate-300 p-0.5 min-w-[6rem] align-top text-sm ${cellBgExtra} ${dayColumnDupBg(dateStr)}`}
+                        onDragOver={handleDropExtra ? (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; } : undefined}
+                        onDrop={handleDropExtra}
+                      >
+                        <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
+                          {isUserCreatedModality(mod) ? (extra.length ? [...extra].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
+                            <span
+                              key={id}
+                              draggable={editable}
+                              className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'extra') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                              title={name(id)}
+                              onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'extra' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                            >{name(id)}</span>
+                          )) : editable ? (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
+                              onDoubleClick={openAssignPickerExtra}
+                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAssignPickerExtra(); } }}
+                            >－</span>
+                          ) : (
+                            <span className="text-stone-400">－</span>
+                          )) : <span className="text-stone-300">－</span>}
+                        </div>
+                      </td>
+                    )}
                   </React.Fragment>
                 );
               })}
@@ -807,12 +1074,12 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
           ))}
           {scheduleRows.map(({ key, label, getVal }) => (
             <tr key={key} className="bg-slate-100/50">
-              <td className="border border-slate-300 p-1 sticky left-0 bg-slate-100 z-10 font-semibold text-stone-700 align-middle">{label}</td>
+              <td className="border border-slate-300 p-0.5 sticky left-0 bg-slate-100 z-10 font-semibold text-stone-700 align-middle">{label}</td>
               {cal.map(day => {
                 const staffId = getVal(day);
                 const isWeekend = day.isWeekend || day.isHoliday;
                 return (
-                  <td key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-1 min-w-[8rem] text-left align-middle text-base ${isWeekend ? 'bg-slate-50' : 'bg-white'}`}>
+                  <td key={day.date} colSpan={hasUserCreatedMod ? 3 : 2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-middle text-base ${isWeekend ? 'bg-slate-50' : 'bg-white'}`}>
                     {staffId ? <span className="font-medium whitespace-nowrap truncate block min-w-0 text-stone-800" title={name(staffId)}>{name(staffId)}</span> : <span className="text-stone-400">－</span>}
                   </td>
                 );
@@ -820,33 +1087,63 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
             </tr>
           ))}
           <tr className="bg-amber-50/50">
-            <td className="border border-slate-300 p-1 sticky left-0 bg-amber-100/80 z-10 font-semibold text-stone-800 align-top">休暇等</td>
+            <td className="border border-slate-300 p-0.5 sticky left-0 bg-amber-100/80 z-10 font-semibold text-stone-700 align-top">休暇等</td>
             {cal.map(day => {
               const dateStr = day.date;
+              const woAm = getWeeklyOffBySlot(weeklyOff, dateStr).am;
+              const woPm = getWeeklyOffBySlot(weeklyOff, dateStr).pm;
+              const leave週休Ids = (leaves[dateStr] || []).filter(l => l.leaveType === '週休').map(l => l.staffId);
+              const handleDropWeeklyOff = (editable && moveWeeklyOffAllocation) ? (e) => {
+                e.preventDefault();
+                const raw = e.dataTransfer.getData('text/plain');
+                if (!raw) return;
+                try {
+                  const data = JSON.parse(raw);
+                  if (data.type === 'weeklyOff' && data.dateStr !== dateStr && data.slot != null) moveWeeklyOffAllocation(data.staffId, data.dateStr, dateStr, data.slot, 'am');
+                } catch (_) {}
+              } : undefined;
+              const dropProps = editable ? { onDragOver: (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }, onDrop: handleDropWeeklyOff } : {};
               const leaveEntries = [];
               leaveLabels.forEach(type => {
                 if (type === '非番') {
                   const id = schedule[dateStr]?.dayOffManual ?? schedule[dateStr]?.dayOff;
-                  if (id) leaveEntries.push(`${type}：${name(id)}`);
+                  if (id) leaveEntries.push({ type, text: `${type}：${name(id)}` });
                 } else if (type === '週休') {
-                  const woAm = getWeeklyOffBySlot(weeklyOff, dateStr).am;
-                  const woPm = getWeeklyOffBySlot(weeklyOff, dateStr).pm;
-                  const leave週休Ids = (leaves[dateStr] || []).filter(l => l.leaveType === '週休').map(l => l.staffId);
-                  [...new Set([...woAm, ...woPm, ...leave週休Ids])].forEach(id => leaveEntries.push(`週休：${name(id)}`));
+                  [...new Set([...woAm, ...woPm, ...leave週休Ids])].forEach(id => {
+                    const inAm = woAm.includes(id);
+                    const inPm = woPm.includes(id);
+                    const isFromWeeklyOff = inAm || inPm;
+                    leaveEntries.push({ type: '週休', text: `週休：${name(id)}`, id, isFromWeeklyOff, slot: inAm ? 'am' : 'pm' });
+                  });
                 } else {
-                  (leaves[dateStr] || []).filter(l => l.leaveType === type).forEach(l => leaveEntries.push(`${type}：${name(l.staffId)}`));
+                  (leaves[dateStr] || []).filter(l => l.leaveType === type).forEach(l => leaveEntries.push({ type, text: `${type}：${name(l.staffId)}` }));
                 }
               });
-              const content = leaveEntries.length > 0 ? leaveEntries.join('\n') : '－';
+              const content = leaveEntries.length > 0 ? (
+                leaveEntries.map((entry, i) => {
+                  if (entry.type === '週休' && entry.id != null && editable && moveWeeklyOffAllocation) {
+                    return (
+                      <span key={i} className="block font-medium">
+                        <span
+                          draggable={entry.isFromWeeklyOff}
+                          className={`${entry.isFromWeeklyOff ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                          onDragStart={entry.isFromWeeklyOff ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'weeklyOff', staffId: entry.id, dateStr, slot: entry.slot })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                        >{entry.text}</span>
+                      </span>
+                    );
+                  }
+                  return <span key={i} className="block font-medium text-stone-800">{entry.text}</span>;
+                })
+              ) : '－';
               return (
-                <td key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-1 min-w-[8rem] text-left align-top text-base whitespace-pre-line font-sans ${day.isWeekend || day.isHoliday ? 'bg-slate-50' : 'bg-white'}`}>
+                <td key={day.date} colSpan={hasUserCreatedMod ? 3 : 2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-top text-base whitespace-pre-line font-medium text-stone-800 ${day.isWeekend || day.isHoliday ? 'bg-slate-50' : 'bg-white'} ${dayColumnDupBg(dateStr)}`} {...dropProps}>
                   {content}
                 </td>
               );
             })}
           </tr>
           <tr className="bg-rose-50/50">
-            <td className="border border-slate-300 p-1 sticky left-0 bg-rose-100/80 z-10 font-semibold text-stone-700 align-top">未配置</td>
+            <td className="border border-slate-300 p-0.5 sticky left-0 bg-rose-100/80 z-10 font-semibold text-stone-700 align-top">未配置</td>
             {cal.map(day => {
               const dateStr = day.date;
               const rawAm = allocation[dateStr]?._unassignedAm ?? allocation[dateStr]?._unassigned ?? [];
@@ -867,20 +1164,52 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
               const idsAm = rawAm.filter(id => !scheduleStaffThisDay.has(id));
               const idsPm = rawPm.filter(id => !scheduleStaffThisDay.has(id));
               const isWeekend = day.isWeekend || day.isHoliday;
-              const cellClassBase = `border border-slate-300 p-1 min-w-[6rem] text-left align-top text-base ${isWeekend ? 'bg-slate-50' : ''} ${dayColumnDupBg(dateStr)}`;
-              const renderUnassigned = (ids) => (
+              const handleDropUnassigned = (editable && moveAllocationStaff) ? (slot) => (e) => {
+                e.preventDefault();
+                const raw = e.dataTransfer.getData('text/plain');
+                if (!raw) return;
+                try {
+                  const data = JSON.parse(raw);
+                  if (data.type !== 'allocation-staff' || data.dateStr !== dateStr) return;
+                  if (scheduleStaffThisDay.has(data.staffId)) return;
+                  const to = { type: 'unassigned', slot };
+                  if (data.fromSource.type === 'unassigned') return;
+                  moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
+                } catch (_) {}
+              } : undefined;
+              const cellClassBase = `border border-slate-300 p-0.5 min-w-[6rem] text-left align-top text-base ${isWeekend ? 'bg-slate-50' : ''} ${dayColumnDupBg(dateStr)}`;
+              const renderUnassigned = (slot, ids) => (
                 ids.length ? [...ids].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                  <span key={id} className={`font-medium whitespace-nowrap truncate block min-w-0 ${isDupRedEither(dateStr, id) ? 'bg-red-100 text-red-700 px-0.5 rounded' : 'text-stone-800'}`} title={name(id)}>{name(id)}</span>
+                  <span
+                    key={id}
+                    draggable={editable}
+                    className={`font-medium whitespace-nowrap truncate block min-w-0 ${isDupRedEither(dateStr, id) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, '_unassigned', slot) ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                    title={name(id)}
+                    onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'unassigned', slot } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                  >{name(id)}</span>
                 )) : <span className="text-stone-400">－</span>
               );
               return (
                 <React.Fragment key={day.date}>
-                  <td className={`${cellClassBase} border-l-2 border-l-slate-600 ${!isWeekend ? 'bg-amber-50/30' : ''}`}>
-                    <div className="flex flex-col gap-0.5 min-h-[1.75rem]">{renderUnassigned(idsAm)}</div>
+                  <td
+                    className={`${cellClassBase} border-l-2 border-l-slate-600 ${!isWeekend ? 'bg-amber-50/30' : ''}`}
+                    onDragOver={editable ? (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; } : undefined}
+                    onDrop={editable && handleDropUnassigned ? handleDropUnassigned('am') : undefined}
+                  >
+                    <div className="flex flex-col gap-0.5 min-h-[1.25rem]">{renderUnassigned('am', idsAm)}</div>
                   </td>
-                  <td className={`${cellClassBase} ${!isWeekend ? 'bg-sky-50/30' : ''}`}>
-                    <div className="flex flex-col gap-0.5 min-h-[1.75rem]">{renderUnassigned(idsPm)}</div>
+                  <td
+                    className={`${cellClassBase} ${!isWeekend ? 'bg-sky-50/30' : ''}`}
+                    onDragOver={editable ? (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; } : undefined}
+                    onDrop={editable && handleDropUnassigned ? handleDropUnassigned('pm') : undefined}
+                  >
+                    <div className="flex flex-col gap-0.5 min-h-[1.25rem]">{renderUnassigned('pm', idsPm)}</div>
                   </td>
+                  {hasUserCreatedMod && (
+                    <td className={`${cellClassBase} bg-slate-100/50`}>
+                      <div className="flex flex-col gap-0.5 min-h-[1.25rem]"><span className="text-stone-300">－</span></div>
+                    </td>
+                  )}
                 </React.Fragment>
               );
             })}
@@ -888,6 +1217,59 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
         </tbody>
       </table>
     </div>
+    {editable && assignPicker && getAssignableUnassigned && moveAllocationStaff && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+        onClick={() => setAssignPicker(null)}
+        role="presentation"
+      >
+        <div
+          className="bg-white rounded-xl shadow-xl border border-slate-200 max-h-[80vh] w-full max-w-sm flex flex-col overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+        >
+          <div className="p-3 border-b border-slate-200 font-semibold text-stone-800">
+            未配置から割り当て（{assignPicker.dateStr} {assignPicker.slot === 'am' ? 'AM' : assignPicker.slot === 'pm' ? 'PM' : '追加'}）
+          </div>
+          <div className="overflow-y-auto p-2 flex-1">
+            {(() => {
+              const ids = getAssignableForSlot(assignPicker.dateStr, assignPicker.slot);
+              if (ids.length === 0) {
+                return <p className="text-stone-500 text-sm py-2">割り当て可能な未配置職員がいません。</p>;
+              }
+              return (
+                <ul className="space-y-0.5">
+                  {[...ids].sort((a, b) => String(name(a)).localeCompare(String(name(b)), undefined, { numeric: true })).map(id => (
+                    <li key={id}>
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-2 rounded-lg text-base font-medium text-stone-800 hover:bg-amber-100 focus:bg-amber-100 focus:outline-none"
+                        onClick={() => {
+                          moveAllocationStaff(assignPicker.dateStr, id, { type: 'unassigned', slot: assignPicker.slot }, { type: 'modality', modId: assignPicker.modId, slot: assignPicker.slot });
+                          setAssignPicker(null);
+                        }}
+                      >
+                        {name(id)}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
+          </div>
+          <div className="p-2 border-t border-slate-200">
+            <button
+              type="button"
+              className="w-full py-2 text-stone-600 hover:text-stone-800 text-sm"
+              onClick={() => setAssignPicker(null)}
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </React.Fragment>
   );
 }
 
@@ -1399,26 +1781,31 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
       for (const [modalityId, slotData] of Object.entries(allocation[date])) {
         if (modalityId === '_unassigned') continue;
         const modality = modalityData.find(m => m.id === parseInt(modalityId));
-        const name = modality?.name || `M${modalityId}`;
+        const modName = modality?.name || `M${modalityId}`;
         const am = Array.isArray(slotData) ? slotData : (slotData?.am || []);
         const pm = Array.isArray(slotData) ? [] : (slotData?.pm || []);
+        const extra = isUserCreatedModality(modality) ? (Array.isArray(slotData) ? [] : (slotData?.extra || [])) : [];
         const inAm = am.includes(staffId);
         const inPm = pm.includes(staffId);
-        if (inAm && inPm) return `${name} AM/PM`;
-        if (inAm) return `${name} AM`;
-        if (inPm) return `${name} PM`;
+        const inExtra = extra.includes(staffId);
+        if (inAm && inPm) return `${modName} AM/PM`;
+        if (inAm && inExtra) return `${modName} AM/追加`;
+        if (inPm && inExtra) return `${modName} PM/追加`;
+        if (inAm) return `${modName} AM`;
+        if (inPm) return `${modName} PM`;
+        if (inExtra) return `${modName} 追加`;
       }
     }
     return '-';
   };
 
-  /** 配置表内で職員を同一日の中で移動（D&D）。変えた職員は _manualStaff で赤字表示 */
+  /** 配置表内で職員を同一日の中で移動（D&D）。変えたスロット（AM/PM 別）のみ _manualSlots で赤字表示 */
   const moveAllocationStaff = (dateStr, staffId, fromSource, toTarget) => {
     setAllocation(prev => {
       const next = JSON.parse(JSON.stringify(prev));
       if (!next[dateStr]) return prev;
       const day = next[dateStr];
-      if (!day._manualStaff) day._manualStaff = [];
+      if (!day._manualSlots) day._manualSlots = [];
 
       const removeFrom = (src) => {
         if (src.type === 'unassigned') {
@@ -1431,6 +1818,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
           if (slot && !Array.isArray(slot)) {
             if (src.slot === 'am' && slot.am) slot.am = slot.am.filter(id => id !== staffId);
             if (src.slot === 'pm' && slot.pm) slot.pm = slot.pm.filter(id => id !== staffId);
+            if (src.slot === 'extra' && slot.extra) slot.extra = slot.extra.filter(id => id !== staffId);
           }
         }
       };
@@ -1444,6 +1832,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
           const slot = day[tgt.modId];
           if (Array.isArray(slot)) return;
           if (tgt.slot === 'am' && !slot.am.includes(staffId)) slot.am = [...(slot.am || []), staffId];
+          if (tgt.slot === 'extra' && !(slot.extra || []).includes(staffId)) slot.extra = [...(slot.extra || []), staffId];
           if (tgt.slot === 'pm') {
             const mod = modalityData.find(m => m.id === tgt.modId || m.id === parseInt(tgt.modId, 10));
             const isKyukyuPm = mod?.name === '救命(日勤)';
@@ -1477,9 +1866,22 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
 
       removeFrom(fromSource);
       addTo(toTarget);
-      if (!day._manualStaff.includes(staffId)) day._manualStaff.push(staffId);
+      const slotKey = toTarget.type === 'unassigned' ? '_unassigned' : toTarget.modId;
+      const slotVal = toTarget.slot;
+      if (!day._manualSlots.some(m => m.staffId === staffId && m.modId == slotKey && m.slot === slotVal)) {
+        day._manualSlots.push({ staffId, modId: slotKey, slot: slotVal });
+      }
       return next;
     });
+  };
+
+  const isManualSlotInScreen = (dateStr, staffId, modId, slot) => {
+    const list = allocation[dateStr]?._manualSlots || allocation[dateStr]?._manualStaff;
+    if (!list) return false;
+    if (Array.isArray(list) && list.length > 0 && typeof list[0] === 'object' && list[0].staffId != null) {
+      return list.some(m => m.staffId === staffId && m.modId == modId && m.slot === slot);
+    }
+    return false;
   };
 
   /** その日の「未配置」に表示している職員IDリスト（当番表に載っている人は除外）。slot で AM/PM 未配置を区別 */
@@ -1508,6 +1910,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
       : (allocation[dateStr]?._unassignedAm ?? allocation[dateStr]?._unassigned ?? []);
     return rawIds.filter(id => !scheduleStaffThisDay.has(id));
   };
+  const getAssignableUnassignedForSlot = (dateStr, slot) => getAssignableUnassigned(dateStr, slot === 'extra' ? 'am' : slot);
 
   useEffect(() => {
     if (!allocationLoaded.current) return;
@@ -1602,6 +2005,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
         if (slot && !Array.isArray(slot)) {
           (slot.am || []).forEach(id => amList.push(id));
           (slot.pm || []).forEach(id => pmList.push(id));
+          if (isUserCreatedModality(mod) && (slot.extra || []).length) (slot.extra || []).forEach(id => { amList.push(id); pmList.push(id); });
         }
       });
       const countAm = {};
@@ -1642,6 +2046,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
     return (duplicateInAMByDate[dateStr]?.has(id) || duplicateInPMByDate[dateStr]?.has(id)) ?? false;
   };
 
+  const hasUserCreatedModScreen = modalityData.some(m => isUserCreatedModality(m));
+
   const colorMap = {
     '16': 'bg-blue-100 text-blue-800 border-blue-200',
     '日勤': 'bg-green-100 text-green-800 border-green-200',
@@ -1674,11 +2080,11 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
             aria-label="未配置の職員を選択"
           >
             <div className="p-3 border-b border-slate-200 bg-stone-50 font-semibold text-stone-800">
-              未配置から割り当て（{assignPicker.dateStr} {assignPicker.slot === 'am' ? 'AM' : 'PM'}）
+              未配置から割り当て（{assignPicker.dateStr} {assignPicker.slot === 'am' ? 'AM' : assignPicker.slot === 'pm' ? 'PM' : '追加'}）
             </div>
             <div className="overflow-y-auto p-2 flex-1">
               {(() => {
-                const ids = getAssignableUnassigned(assignPicker.dateStr, assignPicker.slot);
+                const ids = getAssignableUnassignedForSlot(assignPicker.dateStr, assignPicker.slot);
                 const name = (id) => staffData.find(s => s.id === id)?.name || id;
                 if (ids.length === 0) {
                   return <p className="text-stone-500 text-sm py-2">割り当て可能な未配置職員がいません。</p>;
@@ -1850,15 +2256,16 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
               <table className="border-collapse text-sm min-w-full">
                 <thead>
                   <tr className="bg-stone-100 border-b-2 border-slate-400">
-                    <th className="border border-slate-300 p-1 sticky left-0 bg-stone-100 z-20 min-w-[110px] text-stone-800 font-bold">モダリティ</th>
+                    <th className="border border-slate-300 p-0.5 sticky left-0 bg-stone-100 z-20 min-w-[110px] text-stone-800 font-bold">モダリティ</th>
                     {safeCalendar.map(day => {
                       const dow = day.dayOfWeekNum ?? new Date(day.date + 'T12:00:00').getDay();
                       const isSunOrHoliday = dow === 0 || day.isHoliday;
                       const isSat = dow === 6;
                       const dateColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-800';
                       const weekdayColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-600';
+                      const dayColSpan = hasUserCreatedModScreen ? 3 : 2;
                       return (
-                      <th key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
+                      <th key={day.date} colSpan={dayColSpan} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
                         <div className={`font-semibold ${dateColor}`}>{(day.date || '').slice(5).replace('-', '/')}</div>
                         <div className={`text-xs ${weekdayColor}`}>{day.dayOfWeek}</div>
                       </th>
@@ -1870,6 +2277,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                       <React.Fragment key={day.date}>
                         <th className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-amber-50/80 ${dayColumnDupBg(day.date)}`}>AM</th>
                         <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-sky-50/80 ${dayColumnDupBg(day.date)}`}>PM</th>
+                        {hasUserCreatedModScreen && <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-emerald-50/80 ${dayColumnDupBg(day.date)}`}>追加</th>}
                       </React.Fragment>
                     ))}
                   </tr>
@@ -1880,14 +2288,15 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                       const slot = allocation[day.date]?.[mod.id];
                       const am = Array.isArray(slot) ? slot : (slot?.am || []);
                       const pm = Array.isArray(slot) ? [] : (slot?.pm || []);
-                      return { am, pm };
+                      const extra = isUserCreatedModality(mod) ? (Array.isArray(slot) ? [] : (slot?.extra || [])) : [];
+                      return { am, pm, extra };
                     });
-                    const maxLines = Math.max(1, ...slotDataByDate.flatMap(s => Math.max(s.am.length, s.pm.length)));
+                    const maxLines = Math.max(1, ...slotDataByDate.flatMap(s => Math.max(s.am.length, s.pm.length, s.extra?.length || 0)));
                     const rowMinHeight = `${Math.max(2, maxLines) * 1.25}rem`;
                     return (
                       <React.Fragment key={mod.id}>
                         <tr className="hover:bg-slate-50/50 transition-all" style={{ minHeight: rowMinHeight }}>
-                          <td className="border border-slate-300 p-1 sticky left-0 bg-slate-50 z-10 font-semibold text-stone-800 align-top">
+                          <td className="border border-slate-300 p-0.5 sticky left-0 bg-slate-50 z-10 font-semibold text-stone-800 align-top">
                             {mod.name}
                           </td>
                           {safeCalendar.map(day => {
@@ -1895,14 +2304,15 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                             const slot = allocation[dateStr]?.[mod.id];
                             const am = Array.isArray(slot) ? slot : (slot?.am || []);
                             const pm = Array.isArray(slot) ? [] : (slot?.pm || []);
+                            const extra = isUserCreatedModality(mod) ? (Array.isArray(slot) ? [] : (slot?.extra || [])) : [];
                             const name = (id) => staffData.find(s => s.id === id)?.name || id;
                             const isWeekend = day.isWeekend || day.isHoliday;
-                            const manualStaff = allocation[dateStr]?._manualStaff || [];
                             const { requiredAm, requiredPm } = getRequiredForModality(mod, dateStr);
                             const isShortAm = !isWeekend && am.length < requiredAm;
                             const isShortPm = !isWeekend && pm.length < requiredPm;
                             const cellBgAm = isShortAm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-amber-50/30';
                             const cellBgPm = isShortPm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-sky-50/30';
+                            const cellBgExtra = isWeekend ? 'bg-slate-50' : 'bg-emerald-50/30';
                             const handleDropAm = (e) => {
                               e.preventDefault();
                               const raw = e.dataTransfer.getData('text/plain');
@@ -1927,19 +2337,32 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                 moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
                               } catch (_) {}
                             };
+                            const handleDropExtra = isUserCreatedModality(mod) ? (e) => {
+                              e.preventDefault();
+                              const raw = e.dataTransfer.getData('text/plain');
+                              if (!raw) return;
+                              try {
+                                const data = JSON.parse(raw);
+                                if (data.type !== 'allocation-staff' || data.dateStr !== dateStr) return;
+                                const to = { type: 'modality', modId: mod.id, slot: 'extra' };
+                                if (data.fromSource.type === to.type && data.fromSource.modId === to.modId && data.fromSource.slot === to.slot) return;
+                                moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
+                              } catch (_) {}
+                            } : undefined;
+                            const openAssignPickerExtra = () => isUserCreatedModality(mod) && setAssignPicker({ dateStr, modId: mod.id, slot: 'extra' });
                             return (
                               <React.Fragment key={day.date}>
                                 <td
-                                  className={`border border-slate-300 border-l-2 border-l-slate-600 p-1 min-w-[6rem] align-top text-sm ${cellBgAm} ${dayColumnDupBg(dateStr)}`}
+                                  className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[6rem] align-top text-sm ${cellBgAm} ${dayColumnDupBg(dateStr)}`}
                                   onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }}
                                   onDrop={handleDropAm}
                                 >
-                                  <div className="flex flex-col gap-0.5 min-h-[1.75rem]">
+                                  <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
                                     {am.length ? [...am].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
                                       <span
                                         key={id}
                                         draggable
-                                        className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : manualStaff.includes(id) ? 'text-red-600' : 'text-stone-800'}`}
+                                        className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'am') ? 'text-red-600' : 'text-stone-800'}`}
                                         title={name(id)}
                                         onDragStart={(e) => {
                                           e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'am' } }));
@@ -1953,7 +2376,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                         role="button"
                                         tabIndex={0}
                                         className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
-                                        onClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'am' })}
+                                        onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'am' })}
                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'am' }); } }}
                                       >
                                         －
@@ -1963,23 +2386,23 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                       className="block min-h-[1.25rem] flex-1 cursor-pointer"
                                       role="button"
                                       tabIndex={0}
-                                      onClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'am' })}
+                                      onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'am' })}
                                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'am' }); } }}
                                       aria-label="未配置から割り当て"
                                     />
                                   </div>
                                 </td>
                                 <td
-                                  className={`border border-slate-300 p-1 min-w-[6rem] align-top text-sm ${cellBgPm} ${dayColumnDupBg(dateStr)}`}
+                                  className={`border border-slate-300 p-0.5 min-w-[6rem] align-top text-sm ${cellBgPm} ${dayColumnDupBg(dateStr)}`}
                                   onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }}
                                   onDrop={handleDropPm}
                                 >
-                                  <div className="flex flex-col gap-0.5 min-h-[1.75rem]">
+                                  <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
                                     {pm.length ? [...pm].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
                                       <span
                                         key={id}
                                         draggable
-                                        className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : manualStaff.includes(id) ? 'text-red-600' : 'text-stone-800'}`}
+                                        className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'pm') ? 'text-red-600' : 'text-stone-800'}`}
                                         title={name(id)}
                                         onDragStart={(e) => {
                                           e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'pm' } }));
@@ -1993,7 +2416,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                         role="button"
                                         tabIndex={0}
                                         className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
-                                        onClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' })}
+                                        onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' })}
                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' }); } }}
                                       >
                                         －
@@ -2003,12 +2426,56 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                       className="block min-h-[1.25rem] flex-1 cursor-pointer"
                                       role="button"
                                       tabIndex={0}
-                                      onClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' })}
+                                      onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' })}
                                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' }); } }}
                                       aria-label="未配置から割り当て"
                                     />
                                   </div>
                                 </td>
+                                {hasUserCreatedModScreen && (
+                                  <td
+                                    className={`border border-slate-300 p-0.5 min-w-[6rem] align-top text-sm ${cellBgExtra} ${dayColumnDupBg(dateStr)}`}
+                                    onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }}
+                                    onDrop={handleDropExtra}
+                                  >
+                                    <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
+                                      {isUserCreatedModality(mod) ? (extra.length ? [...extra].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
+                                        <span
+                                          key={id}
+                                          draggable
+                                          className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'extra') ? 'text-red-600' : 'text-stone-800'}`}
+                                          title={name(id)}
+                                          onDragStart={(e) => {
+                                            e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'extra' } }));
+                                            e.dataTransfer.effectAllowed = 'move';
+                                          }}
+                                        >
+                                          {name(id)}
+                                        </span>
+                                      )) : (
+                                        <span
+                                          role="button"
+                                          tabIndex={0}
+                                          className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
+                                          onDoubleClick={openAssignPickerExtra}
+                                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAssignPickerExtra(); } }}
+                                        >
+                                          －
+                                        </span>
+                                      )) : <span className="text-stone-300">－</span>}
+                                      {isUserCreatedModality(mod) && (
+                                        <span
+                                          className="block min-h-[1.25rem] flex-1 cursor-pointer"
+                                          role="button"
+                                          tabIndex={0}
+                                          onDoubleClick={openAssignPickerExtra}
+                                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAssignPickerExtra(); } }}
+                                          aria-label="未配置から割り当て"
+                                        />
+                                      )}
+                                    </div>
+                                  </td>
+                                )}
                               </React.Fragment>
                             );
                           })}
@@ -2066,7 +2533,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                       <>
                         {scheduleRows.map(({ key, label, getVal }) => (
                           <tr key={key} className="bg-slate-100/50 hover:bg-slate-100 transition-all">
-                            <td className="border border-slate-300 p-1 sticky left-0 bg-slate-100 z-10 font-semibold text-stone-700 align-middle">
+                            <td className="border border-slate-300 p-0.5 sticky left-0 bg-slate-100 z-10 font-semibold text-stone-700 align-middle">
                               {label}
                             </td>
                             {safeCalendar.map(day => {
@@ -2076,8 +2543,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                               return (
                                 <td
                                   key={day.date}
-                                  colSpan={2}
-                                  className={`border border-slate-300 border-l-2 border-l-slate-600 p-1 min-w-[8rem] text-left align-middle text-base ${dayColumnDupBg(day.date)} ${isWeekend ? 'bg-slate-50' : 'bg-white'}`}
+                                  colSpan={hasUserCreatedModScreen ? 3 : 2}
+                                  className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-middle text-base ${dayColumnDupBg(day.date)} ${isWeekend ? 'bg-slate-50' : 'bg-white'}`}
                                 >
                                   {staffId ? <span className={`font-medium whitespace-nowrap truncate block min-w-0 ${isDup ? 'bg-stone-300 text-stone-900 px-1 rounded' : 'text-stone-800'}`} title={name(staffId)}>{name(staffId)}</span> : <span className="text-stone-400">－</span>}
                                 </td>
@@ -2086,7 +2553,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                           </tr>
                         ))}
                         <tr className="bg-amber-50/50 hover:bg-amber-50 transition-all">
-                          <td className="border border-slate-300 p-1 sticky left-0 bg-amber-100/80 z-10 font-semibold text-stone-800 align-top">
+                          <td className="border border-slate-300 p-0.5 sticky left-0 bg-amber-100/80 z-10 font-semibold text-stone-700 align-top">
                             休暇等
                           </td>
                           {safeCalendar.map(day => {
@@ -2095,7 +2562,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                             const woAm = getWeeklyOffBySlot(weeklyOff, dateStr).am;
                             const woPm = getWeeklyOffBySlot(weeklyOff, dateStr).pm;
                             const leave週休Ids = (leaves[dateStr] || []).filter(l => l.leaveType === '週休').map(l => l.staffId);
-                            const baseClass = `border border-slate-300 border-l-2 border-l-slate-600 p-1 min-w-[6rem] text-left align-top text-base whitespace-pre-line font-sans ${dayColumnDupBg(dateStr)} ${isWeekend ? 'bg-slate-50' : 'bg-white'}`;
+                            const baseClass = `border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[6rem] text-left align-top text-base whitespace-pre-line font-medium text-stone-800 ${dayColumnDupBg(dateStr)} ${isWeekend ? 'bg-slate-50' : 'bg-white'}`;
                             const dropProps = {
                               onDragOver: (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; },
                               onDrop: (e) => handleDropWeeklyOff(dateStr, 'am', e)
@@ -2136,12 +2603,12 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                               })
                             ) : <span className="text-stone-400">－</span>;
                             return (
-                              <td key={day.date} colSpan={2} className={baseClass} {...dropProps}>{content}</td>
+                              <td key={day.date} colSpan={hasUserCreatedModScreen ? 3 : 2} className={baseClass} {...dropProps}>{content}</td>
                             );
                           })}
                         </tr>
                         <tr className="bg-rose-50/50 hover:bg-rose-50 transition-all">
-                          <td className="border border-slate-300 p-1 sticky left-0 bg-rose-100/80 z-10 font-semibold text-stone-700 align-top">
+                          <td className="border border-slate-300 p-0.5 sticky left-0 bg-rose-100/80 z-10 font-semibold text-stone-700 align-top">
                             未配置
                           </td>
                           {safeCalendar.map(day => {
@@ -2165,7 +2632,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                             ].filter(Boolean));
                             const idsAm = rawAm.filter(id => !scheduleStaffThisDay.has(id));
                             const idsPm = rawPm.filter(id => !scheduleStaffThisDay.has(id));
-                            const manualStaff = allocation[dateStr]?._manualStaff || [];
                             const name = (id) => (id ? (staffData.find(s => s.id === id)?.name || id) : '');
                             const handleDropUnassigned = (slot) => (e) => {
                               e.preventDefault();
@@ -2180,13 +2646,13 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                 moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
                               } catch (_) {}
                             };
-                            const cellClassBase = `border border-slate-300 p-1 min-w-[6rem] text-left align-top text-base ${isWeekend ? 'bg-slate-50' : ''}`;
+                            const cellClassBase = `border border-slate-300 p-0.5 min-w-[6rem] text-left align-top text-base ${isWeekend ? 'bg-slate-50' : ''}`;
                             const renderUnassignedList = (slot, ids) => (
                               ids.length ? [...ids].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
                                 <span
                                   key={id}
                                   draggable
-                                  className={`block text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate min-w-0 ${isDuplicateGreyEither(dateStr, id) ? 'bg-red-100 text-red-700 px-0.5 rounded' : manualStaff.includes(id) ? 'text-red-600' : 'text-stone-800'}`}
+                                  className={`block text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate min-w-0 ${isDuplicateGreyEither(dateStr, id) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, '_unassigned', slot) ? 'text-red-600' : 'text-stone-800'}`}
                                   title={name(id)}
                                   onDragStart={(e) => {
                                     e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'unassigned', slot } }));
@@ -2204,15 +2670,20 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                   onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }}
                                   onDrop={handleDropUnassigned('am')}
                                 >
-                                  <div className="flex flex-col gap-0.5 min-h-[1.75rem]">{renderUnassignedList('am', idsAm)}</div>
+                                  <div className="flex flex-col gap-0.5 min-h-[1.25rem]">{renderUnassignedList('am', idsAm)}</div>
                                 </td>
                                 <td
                                   className={`${cellClassBase} ${!isWeekend ? 'bg-sky-50/30' : ''} ${dayColumnDupBg(dateStr)}`}
                                   onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }}
                                   onDrop={handleDropUnassigned('pm')}
                                 >
-                                  <div className="flex flex-col gap-0.5 min-h-[1.75rem]">{renderUnassignedList('pm', idsPm)}</div>
+                                  <div className="flex flex-col gap-0.5 min-h-[1.25rem]">{renderUnassignedList('pm', idsPm)}</div>
                                 </td>
+                                {hasUserCreatedModScreen && (
+                                  <td className={`${cellClassBase} bg-slate-100/50 ${dayColumnDupBg(dateStr)}`}>
+                                    <div className="flex flex-col gap-0.5 min-h-[1.25rem]"><span className="text-stone-300">－</span></div>
+                                  </td>
+                                )}
                               </React.Fragment>
                             );
                           })}

@@ -151,16 +151,12 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   const [pairs, setPairs] = useState([]);
   const [schedule, setSchedule] = useState({});
   const [weeklyOff, setWeeklyOff] = useState({});
-  const [showNightShiftModal, setShowNightShiftModal] = useState(false);
-  const [showDayShiftModal, setShowDayShiftModal] = useState(false);
-  const [showPairModal, setShowPairModal] = useState(false);
+  const [showAllOrderModal, setShowAllOrderModal] = useState(false);
   const [pairIncompleteFirst, setPairIncompleteFirst] = useState(null);
   const [manualPicker, setManualPicker] = useState(null); // { date, field } 手動変更用（右列）
   const [editPicker, setEditPicker] = useState(null); // { date, field } 左列（自動値）の変更用
   const [nightShiftStartId, setNightShiftStartId] = useState(null); // その月の夜勤開始の人
   const [dayShiftStartId, setDayShiftStartId] = useState(null); // その月の日勤開始の人
-  const [showNightStartPicker, setShowNightStartPicker] = useState(false);
-  const [showDayStartPicker, setShowDayStartPicker] = useState(false);
   const [allocationRunning, setAllocationRunning] = useState(false);
   /** 配置表データ（配置表作成で更新。初回は localStorage から読む） */
   const [allocation, setAllocation] = useState(() => {
@@ -180,6 +176,36 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   const [redoCount, setRedoCount] = useState(0);
 
   const safeCalendar = useSafeCalendar(calendar);
+
+  const runAllocation = async () => {
+    const modalityData = Array.isArray(rawModalityData) ? rawModalityData : [];
+    const staffDataArr = Array.isArray(rawStaffData) ? rawStaffData : [];
+    if (calendar.length === 0) {
+      alert('⚠️ まず「カレンダーを生成（職員も配置）」を押して当番表を作成してください');
+      return;
+    }
+    if (modalityData.length === 0) {
+      alert('⚠️ モダリティが登録されていません。');
+      return;
+    }
+    if (staffDataArr.length === 0) {
+      alert('⚠️ 職員が登録されていません。');
+      return;
+    }
+    setAllocationRunning(true);
+    try {
+      const { allocation: newAllocation, alertMessage } = runAllocationForCalendar(calendar, modalityData, staffDataArr);
+      if (newAllocation != null) {
+        const startDateVal = /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : '';
+        const endDateVal = /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : '';
+        localStorage.setItem('allocationData', JSON.stringify({ allocation: newAllocation, startDate: startDateVal, endDate: endDateVal }));
+        setAllocation(newAllocation);
+      }
+      alert(alertMessage);
+    } finally {
+      setAllocationRunning(false);
+    }
+  };
 
   useEffect(() => {
     const t = setTimeout(() => setBackButtonReady(true), NAV_GUARD_MS);
@@ -482,6 +508,15 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   }, [startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff]);
 
   useEffect(() => {
+    if (Object.keys(allocation).length === 0) return;
+    try {
+      const startDateVal = /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : '';
+      const endDateVal = /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : '';
+      localStorage.setItem('allocationData', JSON.stringify({ allocation, startDate: startDateVal, endDate: endDateVal }));
+    } catch (_) {}
+  }, [allocation, startDate, endDate]);
+
+  useEffect(() => {
     try {
       const saved = localStorage.getItem('scheduleData');
       if (!saved) return;
@@ -511,12 +546,12 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-violet-400 p-5 relative">
+    <div className="min-h-screen bg-violet-400 p-3 relative">
       <div className="absolute top-20 left-20 w-96 h-96 bg-amber-200/30 rounded-full blur-3xl pointer-events-none" />
 
       <div className="max-w-[95vw] w-full mx-auto relative min-h-0">
-        <div className="flex justify-between items-center gap-4 mb-3">
-          <h2 className="text-3xl font-bold text-stone-800">当番表作成</h2>
+        <div className="flex justify-between items-center gap-4 mb-2">
+          <h2 className="text-2xl font-bold text-stone-800">当番表作成</h2>
           <div className="relative shrink-0">
             {!backButtonReady && (
               <div
@@ -537,16 +572,16 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-3 items-end">
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
-            <h3 className="font-bold mb-2 text-stone-800 text-lg">📅 期間設定</h3>
-            <div className="space-y-2">
-              <div>
-                <label className="block text-sm mb-1 font-semibold text-stone-600 uppercase tracking-wider">開始日</label>
-                <input type="date" value={startDate ?? ''} onChange={(e) => setStartDate(e.target.value ?? '')} className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all" />
+        <div className="flex flex-wrap gap-3 mb-2">
+          <div className="flex items-center gap-4 bg-slate-50 rounded-xl border-2 border-slate-400 px-4 py-2.5 shadow-sm">
+            <h3 className="font-bold text-stone-800 text-base shrink-0">📅 期間設定</h3>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-semibold text-stone-600 shrink-0">開始日</label>
+                <input type="date" value={startDate ?? ''} onChange={(e) => setStartDate(e.target.value ?? '')} className="p-1.5 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none w-[10rem]" />
               </div>
-              <div>
-                <label className="block text-sm mb-1 font-semibold text-stone-600 uppercase tracking-wider">終了日</label>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-semibold text-stone-600 shrink-0">終了日</label>
                 <input
                   type="date"
                   value={endDate ?? ''}
@@ -558,44 +593,36 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                       setEndDate('');
                     }
                   }}
-                  className="w-full p-2 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none transition-all"
+                  className="p-1.5 bg-slate-50 border-2 border-slate-400 rounded-lg text-stone-800 text-sm focus:border-amber-400 focus:ring-2 focus:ring-amber-100 outline-none w-[10rem]"
                 />
               </div>
             </div>
           </div>
-          <div className="min-w-0 bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm hover:border-slate-400 transition-all">
-            <h3 className="font-bold mb-2 text-stone-800 text-lg">👥 順番設定</h3>
-            <div className="space-y-2">
-              <div className="flex gap-2 items-center">
-                <button onClick={() => setShowNightShiftModal(true)} className="btn-panel flex-1 bg-blue-600 hover:bg-blue-500 text-white shadow-md">夜勤順番 ({nightShiftOrder.length}名)</button>
-                <button onClick={() => setShowNightStartPicker(true)} className="min-h-[32px] py-1.5 px-2.5 rounded text-xs font-semibold bg-blue-500 hover:bg-blue-400 text-white border border-blue-600 shrink-0">開始者</button>
-                <span className="text-stone-700 text-sm font-medium truncate min-w-0 max-w-[8rem]" title={nightShiftStartId ? (staffData.find(s => s.id === nightShiftStartId)?.name || nightShiftStartId) : ''}>
-                  {nightShiftStartId ? (staffData.find(s => s.id === nightShiftStartId)?.name || nightShiftStartId) : '－'}
-                </span>
-              </div>
-              <div className="flex gap-2 items-center">
-                <button onClick={() => setShowDayShiftModal(true)} className="btn-panel flex-1 bg-emerald-600 hover:bg-emerald-500 text-white shadow-md">日勤順番 ({dayShiftOrder.length}名)</button>
-                <button onClick={() => setShowDayStartPicker(true)} className="min-h-[32px] py-1.5 px-2.5 rounded text-xs font-semibold bg-emerald-500 hover:bg-emerald-400 text-white border border-emerald-600 shrink-0">開始者</button>
-                <span className="text-stone-700 text-sm font-medium truncate min-w-0 max-w-[8rem]" title={dayShiftStartId ? (staffData.find(s => s.id === dayShiftStartId)?.name || dayShiftStartId) : ''}>
-                  {dayShiftStartId ? (staffData.find(s => s.id === dayShiftStartId)?.name || dayShiftStartId) : '－'}
-                </span>
-              </div>
-              <button onClick={() => setShowPairModal(true)} className="btn-panel w-full bg-orange-600 hover:bg-orange-500 text-white shadow-md">ペア設定 ({pairs.length}組)</button>
-            </div>
+          <div className="flex items-center gap-3 bg-slate-50 rounded-xl border-2 border-slate-400 px-4 py-2.5 shadow-sm">
+            <h3 className="font-bold text-stone-800 text-base shrink-0">👥 順番設定</h3>
+            <button
+              type="button"
+              onClick={() => setShowAllOrderModal(true)}
+              className="btn-panel bg-violet-600 hover:bg-violet-500 text-white shadow-md text-sm py-1.5 px-3"
+            >
+              一括設定
+            </button>
           </div>
         </div>
 
         {safeCalendar.length > 0 && (
           <CalendarSectionBoundary>
-          <div id="shift-calendar-print-area" className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-4 shadow-sm">
+          <div id="shift-calendar-print-area" className="bg-slate-50 rounded-2xl border-2 border-slate-400 p-3 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-2 print:hidden">
               <h3 className="font-bold text-stone-800 text-2xl">📆 当番表カレンダー</h3>
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={generateCalendar} className="btn-panel bg-amber-500 hover:bg-amber-400 text-stone-900 font-semibold shadow-md border-2 border-amber-600 shrink-0">📅 カレンダーを生成（職員も配置）</button>
-                <button onClick={() => autoAssign()} className="btn-panel bg-amber-400 hover:bg-amber-300 text-stone-800 font-semibold shadow-md border-2 border-amber-600 shrink-0">当番表を再配置</button>
-                <button type="button" onClick={() => window.history.back()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">← 戻る</button>
-                <button type="button" onClick={() => window.history.forward()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">進む →</button>
-                <button type="button" onClick={() => window.print()} className="btn-panel bg-slate-600 hover:bg-slate-500 text-white shadow-sm shrink-0">🖨️ A4縦で1枚印刷</button>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={generateCalendar} className="btn-section bg-amber-500 hover:bg-amber-400 text-stone-900 border-amber-600 shadow-sm">📅 カレンダーを生成（職員も配置）</button>
+                  <button onClick={() => autoAssign()} className="btn-section bg-amber-400 hover:bg-amber-300 text-stone-800 border-amber-600">当番表を再配置</button>
+                  <button type="button" onClick={() => window.history.back()} className="btn-section-nav">← 戻る</button>
+                  <button type="button" onClick={() => window.history.forward()} className="btn-section-nav">進む →</button>
+                </div>
+                <button type="button" onClick={() => window.print()} className="btn-section-print shrink-0">🖨️ 印刷</button>
               </div>
             </div>
             <div className="overflow-x-auto shift-calendar-print-content">
@@ -618,15 +645,15 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                 </colgroup>
                 <thead>
                   <tr className="border-b border-slate-400 bg-slate-50">
-                    <th className="pl-0.5 pr-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">日付</th>
-                    <th className="pl-0 pr-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">曜日</th>
-                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">日勤</th>
-                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">サポート</th>
-                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">夜勤</th>
-                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">B</th>
-                    <th colSpan={2} className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">非番</th>
-                    <th className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white border-r border-slate-400 print:hidden">外科</th>
-                    <th className="px-0.5 py-1 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white print:hidden">内科</th>
+                    <th className="pl-0.5 pr-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">日付</th>
+                    <th className="pl-0 pr-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-base border-r border-slate-400">曜日</th>
+                    <th colSpan={2} className="px-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">日勤</th>
+                    <th colSpan={2} className="px-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">サポート</th>
+                    <th colSpan={2} className="px-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">夜勤</th>
+                    <th colSpan={2} className="px-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">B</th>
+                    <th colSpan={2} className="px-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-base bg-slate-50 border-r-2 border-slate-500">非番</th>
+                    <th className="px-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white border-r border-slate-400 print:hidden">外科</th>
+                    <th className="px-0.5 py-0.5 text-center text-stone-600 font-semibold tracking-wider text-sm bg-white print:hidden">内科</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -662,13 +689,13 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                     const isBFromLeftEdit = isSurgery && nextDay && schedule[nextDay.date]?.nightShiftEdited;
                     const isDayOffFromLeftEdit = prevDay && schedule[prevDay.date]?.nightShiftEdited;
                     const manualBox = (field, value, hasAuto) => {
-                      if (!hasAuto) return <td className={`px-0.5 py-1 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`} />;
+                      if (!hasAuto) return <td className={`px-0.5 py-0.5 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`} />;
                       return (
-                        <td className={`px-0.5 py-1 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`}>
+                        <td className={`px-0.5 py-0.5 text-center border-r-2 border-slate-500 ${cellBg} ${overlapBg}`}>
                           <button
                             type="button"
                             onClick={() => setManualPicker({ date: day.date, field })}
-                            className={`w-full min-h-[1.5rem] rounded text-base font-medium bg-white/70 hover:bg-white/85 border border-slate-300/80 transition-all ${value ? 'text-red-600' : 'text-stone-500'}`}
+                            className={`w-full min-h-[1.25rem] rounded text-base font-medium bg-white/70 hover:bg-white/85 border border-slate-300/80 transition-all ${value ? 'text-red-600' : 'text-stone-500'}`}
                           >
                             {name(value) || ''}
                           </button>
@@ -676,11 +703,11 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                       );
                     };
                     const autoEditCell = (field, displayValue, isFromManual = false) => (
-                      <td className={`px-0.5 py-1 text-center font-bold text-sm ${borderR} ${cellBg} ${overlapBg}`}>
+                      <td className={`px-0.5 py-0.5 text-center font-bold text-sm ${borderR} ${cellBg} ${overlapBg}`}>
                         <button
                           type="button"
                           onClick={() => { if (window.confirm('変えても良いですか？')) setEditPicker({ date: day.date, field }); }}
-                          className={`w-full min-h-[1.5rem] rounded text-base hover:bg-slate-200/60 transition-all cursor-pointer ${isFromManual ? 'text-red-600' : 'text-stone-800'}`}
+                          className={`w-full min-h-[1.25rem] rounded text-base hover:bg-slate-200/60 transition-all cursor-pointer ${isFromManual ? 'text-red-600' : 'text-stone-800'}`}
                         >
                           {name(displayValue) || ''}
                         </button>
@@ -688,8 +715,8 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                     );
                     return (
                       <tr key={day.date} className={`border-b border-slate-400 transition-all ${rowBg} ${rowBorder}`}>
-                        <td className={`pl-0.5 pr-0.5 py-1 text-center text-stone-800 text-base border-r border-slate-400 ${cellBg}`}>{day.date}</td>
-                        <td className={`pl-0 pr-0.5 py-1 text-center font-bold text-base border-r border-slate-400 ${cellBg} ${isHoliday ? 'text-red-600' : isWeekendOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</td>
+                        <td className={`pl-0.5 pr-0.5 py-0.5 text-center text-stone-800 text-base border-r border-slate-400 ${cellBg}`}>{day.date}</td>
+                        <td className={`pl-0 pr-0.5 py-0.5 text-center font-bold text-base border-r border-slate-400 ${cellBg} ${isHoliday ? 'text-red-600' : isWeekendOrHoliday ? 'text-red-600' : 'text-stone-800'}`}>{day.dayOfWeek}</td>
                         {autoEditCell('dayShift', daySchedule.dayShift, isDayShiftEdited)}
                         {manualBox('dayShiftManual', daySchedule.dayShiftManual, !!daySchedule.dayShift)}
                         {autoEditCell('support', daySchedule.support, isSupportEdited)}
@@ -700,11 +727,11 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                         {manualBox('bManual', daySchedule.bManual, !!bPerson)}
                         {autoEditCell('dayOff', dayOffPerson ?? daySchedule.dayOff, isDayOffFromManual || isDayOffFromLeftEdit)}
                         {manualBox('dayOffManual', daySchedule.dayOffManual, !!dayOffPerson)}
-                        <td className={`px-0.5 py-1 text-center border-r border-slate-400 bg-white print:hidden`}>
-                          <button onClick={() => toggleSurgeryDay(day.date)} className={`min-w-[1.5rem] min-h-[1.5rem] rounded text-base font-semibold transition-all ${isSurgery ? 'bg-red-500 hover:bg-red-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isSurgery ? '✓' : '−'}</button>
+                        <td className={`px-0.5 py-0.5 text-center border-r border-slate-400 bg-white print:hidden`}>
+                          <button onClick={() => toggleSurgeryDay(day.date)} className={`min-w-[1.25rem] min-h-[1.25rem] rounded text-base font-semibold transition-all ${isSurgery ? 'bg-red-500 hover:bg-red-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isSurgery ? '✓' : '−'}</button>
                         </td>
-                        <td className="px-0.5 py-1 text-center bg-white print:hidden">
-                          <button onClick={() => toggleInternalMedicineDay(day.date)} className={`min-w-[1.5rem] min-h-[1.5rem] rounded text-base font-semibold transition-all ${isInternalMedicine ? 'bg-pink-500 hover:bg-pink-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isInternalMedicine ? '✓' : '−'}</button>
+                        <td className="px-0.5 py-0.5 text-center bg-white print:hidden">
+                          <button onClick={() => toggleInternalMedicineDay(day.date)} className={`min-w-[1.25rem] min-h-[1.25rem] rounded text-base font-semibold transition-all ${isInternalMedicine ? 'bg-pink-500 hover:bg-pink-400 text-white' : 'bg-stone-300/80 hover:bg-stone-400/80 text-stone-600'}`}>{isInternalMedicine ? '✓' : '−'}</button>
                         </td>
                       </tr>
                     );
@@ -717,11 +744,14 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
 
             <div className="flex flex-wrap items-center justify-between gap-3 mt-4 mb-2">
               <h3 className="font-bold text-stone-800 text-2xl">📋 週休割り当て結果</h3>
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={autoAssignWeeklyOff} className="btn-panel bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shrink-0">📅 週休自動割当</button>
-                <button onClick={resetWeeklyOff} className="btn-panel bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-2 border-indigo-600 shrink-0">週休割当リセット</button>
-                <button type="button" onClick={() => window.history.back()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">← 戻る</button>
-                <button type="button" onClick={() => window.history.forward()} className="min-h-[36px] px-3 py-1.5 rounded-lg text-sm font-semibold bg-stone-100 hover:bg-stone-200 border-2 border-stone-400 text-stone-800 shrink-0">進む →</button>
+              <div className="flex flex-wrap items-center justify-between gap-3 w-full">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={autoAssignWeeklyOff} className="btn-section bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-700 shadow-sm">📅 週休自動割当</button>
+                  <button onClick={resetWeeklyOff} className="btn-section bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-indigo-600">週休割当リセット</button>
+                  <button type="button" onClick={() => window.history.back()} className="btn-section-nav">← 戻る</button>
+                  <button type="button" onClick={() => window.history.forward()} className="btn-section-nav">進む →</button>
+                </div>
+                <button type="button" onClick={() => window.print()} className="btn-section-print shrink-0">🖨️ 印刷</button>
               </div>
             </div>
             <p className="text-sm text-stone-600 mb-1">縦＝職員（夜勤順番リスト順）、横＝日付。A＝日勤、16＝夜勤（暗ピンク）、B＝青、非番＝オレンジ、黄色＝週休または土日祝で勤務なし。</p>
@@ -839,60 +869,36 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
               <p className="text-stone-600 mt-2">※土日祝で勤務が当たっていない日は黄色で表示しますが、付与する週休の日数には含めません。</p>
             </div>
 
-            {/* 配置表（前バージョンと同様：作成ボタンのあと「配置表を開く」で別画面に表示） */}
-            <div id="allocation-section" className="mt-6 pt-6 border-t-2 border-stone-300">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+            {/* 配置表 */}
+            <div id="allocation-section" className="mt-3 pt-3 border-t-2 border-stone-300">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
                 <h3 className="font-bold text-stone-800 text-2xl">📊 配置表</h3>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={allocationRunning || calendar.length === 0}
-                    onClick={async () => {
-                      const modalityData = Array.isArray(rawModalityData) ? rawModalityData : [];
-                      const staffDataArr = Array.isArray(rawStaffData) ? rawStaffData : [];
-                      if (calendar.length === 0) {
-                        alert('⚠️ まず「カレンダーを生成（職員も配置）」を押して当番表を作成してください');
-                        return;
-                      }
-                      if (modalityData.length === 0) {
-                        alert('⚠️ モダリティが登録されていません。');
-                        return;
-                      }
-                      if (staffDataArr.length === 0) {
-                        alert('⚠️ 職員が登録されていません。');
-                        return;
-                      }
-                      setAllocationRunning(true);
-                      try {
-                        const { allocation: newAllocation, alertMessage } = runAllocationForCalendar(calendar, modalityData, staffDataArr);
-                        if (newAllocation != null) {
-                          const startDateVal = /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : '';
-                          const endDateVal = /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : '';
-                          localStorage.setItem('allocationData', JSON.stringify({ allocation: newAllocation, startDate: startDateVal, endDate: endDateVal }));
-                          setAllocation(newAllocation);
-                        }
-                        alert(alertMessage);
-                      } finally {
-                        setAllocationRunning(false);
-                      }
-                    }}
-                    className="min-h-[44px] px-5 py-2.5 rounded-xl text-base font-semibold bg-blue-600 hover:bg-blue-500 disabled:opacity-70 disabled:cursor-not-allowed text-white border-2 border-blue-700 shadow-sm"
-                  >
-                    {allocationRunning ? '配置中...' : '配置表作成'}
-                  </button>
-                  {typeof onNavigate === 'function' && (
+                <div className="flex flex-wrap items-center justify-between gap-3 w-full">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => onNavigate('allocation')}
-                      className="min-h-[44px] px-5 py-2.5 rounded-xl text-base font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-2 border-emerald-700 shadow-sm"
+                      disabled={allocationRunning || calendar.length === 0}
+                      onClick={runAllocation}
+                      className="btn-section bg-blue-600 hover:bg-blue-500 disabled:opacity-70 disabled:cursor-not-allowed text-white border-blue-700 shadow-sm"
                     >
-                      配置表を開く
+                      {allocationRunning ? '配置中...' : '配置表作成'}
                     </button>
-                  )}
+                    <button
+                      type="button"
+                      disabled={allocationRunning || calendar.length === 0}
+                      onClick={runAllocation}
+                      className="btn-section bg-blue-400 hover:bg-blue-300 text-stone-800 border-blue-600 disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      再配置
+                    </button>
+                    <button type="button" onClick={() => window.history.back()} className="btn-section-nav">← 戻る</button>
+                    <button type="button" onClick={() => window.history.forward()} className="btn-section-nav">進む →</button>
+                  </div>
+                  <button type="button" onClick={() => window.print()} className="btn-section-print shrink-0">🖨️ 印刷</button>
                 </div>
               </div>
-              <p className="text-sm text-stone-600 mb-3">
-                「配置表作成」で自動作成・保存します。同じアルゴリズムで職員を割り振り、下に表を表示します。編集は「配置表を開く」で別画面から行えます。
+              <p className="text-sm text-stone-600 mb-1">
+                「配置表作成」で自動作成・保存します。同じアルゴリズムで職員を割り振り、下に表を表示します。職員名をドラッグ＆ドロップで移動できます。週休も別の平日にD&amp;Dで移動できます。
               </p>
               {safeCalendar.length > 0 && (
                 <AllocationTableView
@@ -903,6 +909,9 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                   schedule={schedule}
                   weeklyOff={weeklyOff}
                   surgeryDays={surgeryDays}
+                  editable
+                  setAllocation={setAllocation}
+                  setWeeklyOff={setWeeklyOff}
                 />
               )}
             </div>
@@ -959,359 +968,127 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
           );
         })()}
 
-        {showNightStartPicker && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-5 z-50" onClick={() => setShowNightStartPicker(false)}>
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <h3 className="font-bold text-stone-800 text-xl mb-3">夜勤の開始者を選ぶ</h3>
-              <div className="max-h-64 overflow-y-auto space-y-1 mb-3">
-                {nightShiftOrder.map((id, idx) => {
-                  const staff = staffData.find(s => s.id === id);
-                  const isStart = nightShiftStartId === id;
-                  return (
-                    <button key={id} type="button" onClick={() => { setNightShiftStartId(id); setShowNightStartPicker(false); autoAssign(id, dayShiftStartId); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-blue-500 border-blue-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-blue-50'}`}>
-                      {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
-                    </button>
-                  );
-                })}
-                {nightShiftOrder.length === 0 && <p className="text-stone-500 py-2">夜勤順番リストを設定してください</p>}
+        {showAllOrderModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-2 z-50">
+            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-4 w-[95vw] max-w-[1400px] h-[95vh] flex flex-col shadow-xl overflow-hidden">
+              <div className="flex justify-between items-center mb-1 shrink-0">
+                <h3 className="font-bold text-stone-800 text-2xl">順番一括設定</h3>
+                <button onClick={() => { setShowAllOrderModal(false); setPairIncompleteFirst(null); }} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
               </div>
-              <button type="button" onClick={() => setShowNightStartPicker(false)} className="w-full px-3 py-2 rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-lg">閉じる</button>
-            </div>
-          </div>
-        )}
-
-        {showDayStartPicker && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-5 z-50" onClick={() => setShowDayStartPicker(false)}>
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-5 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <h3 className="font-bold text-stone-800 text-xl mb-3">日勤の開始者を選ぶ</h3>
-              <div className="max-h-64 overflow-y-auto space-y-1 mb-3">
-                {dayShiftOrder.map((id, idx) => {
-                  const staff = staffData.find(s => s.id === id);
-                  const isStart = dayShiftStartId === id;
-                  return (
-                    <button key={id} type="button" onClick={() => { setDayShiftStartId(id); setShowDayStartPicker(false); autoAssign(nightShiftStartId, id); }} className={`w-full text-left px-3 py-3 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:bg-emerald-50'}`}>
-                      {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
-                    </button>
-                  );
-                })}
-                {dayShiftOrder.length === 0 && <p className="text-stone-500 py-2">日勤順番リストを設定してください</p>}
-              </div>
-              <button type="button" onClick={() => setShowDayStartPicker(false)} className="w-full px-3 py-2 rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-700 font-medium text-lg">閉じる</button>
-            </div>
-          </div>
-        )}
-
-        {showNightShiftModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5 z-50">
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 w-full max-w-4xl max-h-[85vh] flex flex-col shadow-xl">
-              <div className="flex justify-between items-center mb-3 shrink-0">
-                <h3 className="font-bold text-stone-800 text-2xl">夜勤順番リスト設定</h3>
-                <button onClick={() => setShowNightShiftModal(false)} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
-              </div>
-              <p className="text-sm text-stone-600 mb-3 shrink-0">左の職員を右へドラッグして順番を構成。右側でドラッグして並び替え可能。右端で「この月の開始」を選ぶと、その人から順に割り当てます。</p>
-              <div className="flex gap-4 flex-1 min-h-0">
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-slate-300 rounded-xl bg-white overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-slate-100 border-b border-slate-300 shrink-0">職員一覧</h4>
-                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    {staffData.filter(s => !nightShiftOrder.includes(s.id)).map(staff => (
-                      <div
-                        key={staff.id}
-                        draggable
-                        onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }}
-                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-blue-400 hover:bg-blue-50 transition-all"
-                      >
-                        {staff.name} ({staff.id})
-                      </div>
-                    ))}
-                    {staffData.filter(s => !nightShiftOrder.includes(s.id)).length === 0 && (
-                      <p className="text-stone-500 text-sm py-4 text-center">全員が右に追加されています</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-blue-300 rounded-xl bg-blue-50/30 overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-blue-100 border-b border-blue-300 shrink-0">順番（上から）</h4>
-                  <div
-                    className="flex-1 overflow-y-auto p-2 space-y-1 min-h-[120px]"
-                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
-                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      e.currentTarget.classList.remove('ring-2', 'ring-blue-400');
-                      const raw = e.dataTransfer.getData('text/plain');
-                      if (!raw) return;
-                      try {
-                        const { source, staffId } = JSON.parse(raw);
-                        if (source === 'left' && staffId && !nightShiftOrder.includes(staffId)) setNightShiftOrder([...nightShiftOrder, staffId]);
-                      } catch (_) {}
-                    }}
-                  >
-                    {nightShiftOrder.map((id, idx) => {
-                      const staff = staffData.find(s => s.id === id);
-                      return (
-                        <div
-                          key={`${id}-${idx}`}
-                          draggable
-                          onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'right', staffId: id, fromIndex: idx })); e.dataTransfer.effectAllowed = 'move'; }}
-                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('ring-2', 'ring-inset', 'ring-blue-500'); }}
-                          onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-blue-500'); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-blue-500');
-                            const raw = e.dataTransfer.getData('text/plain');
-                            if (!raw) return;
-try {
-                                const data = JSON.parse(raw);
-                                if (data.source === 'right' && data.fromIndex !== undefined) {
-                                  if (data.fromIndex === idx) return;
-                                  const newOrder = nightShiftOrder.filter((_, i) => i !== data.fromIndex);
-                                  const insertIdx = data.fromIndex < idx ? idx - 1 : idx;
-                                  newOrder.splice(insertIdx, 0, data.staffId);
-                                  setNightShiftOrder(newOrder);
-                                } else if (data.source === 'left' && data.staffId && !nightShiftOrder.includes(data.staffId)) {
-                                const newOrder = [...nightShiftOrder];
-                                newOrder.splice(idx, 0, data.staffId);
-                                setNightShiftOrder(newOrder);
-                              }
-                            } catch (_) {}
-                          }}
-                          className="flex justify-between items-center px-3 py-2 rounded-lg border border-blue-300 bg-white cursor-grab active:cursor-grabbing hover:border-blue-500 transition-all group"
-                        >
-                          <span className="text-stone-800 font-medium">{idx + 1}. {staff?.name || id}</span>
-                          <button type="button" onClick={() => setNightShiftOrder(nightShiftOrder.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity">削除</button>
+              <p className="text-sm text-stone-600 mb-2 shrink-0">左の職員を右へドラッグして順番を構成。右側でドラッグして並び替え可能。職員名の右の★をクリックで開始者を選べます。ペアは1人目を「新規ペア」にドロップ→2人目をその行にドロップ。</p>
+              <div className="flex-1 min-h-0 flex flex-row gap-3">
+                {/* 夜勤順番 */}
+                <div className="flex flex-col flex-1 min-w-0 border border-slate-300 rounded-xl bg-slate-50/50 overflow-hidden">
+                  <h4 className="font-bold text-stone-800 text-base mb-1 px-2 py-1.5 shrink-0 flex items-center gap-1 bg-blue-50">
+                    <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-sm">夜勤</span>
+                    <span className="text-stone-500 font-normal text-sm">({nightShiftOrder.length}名)</span>
+                  </h4>
+                  <div className="flex gap-1.5 flex-1 min-h-0 overflow-hidden">
+                      <div className="flex-1 min-w-0 flex flex-col border border-slate-300 rounded-lg bg-white overflow-hidden">
+                        <h4 className="font-bold text-stone-700 px-1.5 py-1 bg-slate-100 border-b border-slate-300 shrink-0 text-sm">職員</h4>
+                        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+                          {staffData.filter(s => !nightShiftOrder.includes(s.id)).map(staff => (
+                            <div key={staff.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }} className="px-2 py-1.5 rounded text-sm border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-blue-400 hover:bg-blue-50 transition-all truncate">{staff.name}</div>
+                          ))}
+                          {staffData.filter(s => !nightShiftOrder.includes(s.id)).length === 0 && <p className="text-stone-500 text-sm py-2 text-center">全員追加済</p>}
                         </div>
-                      );
-                    })}
-                    {nightShiftOrder.length === 0 && (
-                      <p className="text-stone-500 text-sm py-4 text-center border-2 border-dashed border-slate-300 rounded-lg">ここにドロップで追加</p>
-                    )}
-                  </div>
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col border border-blue-300 rounded-lg bg-blue-50/30 overflow-hidden">
+                        <h4 className="font-bold text-stone-700 px-1.5 py-1 bg-blue-100 border-b border-blue-300 shrink-0 text-sm">順番</h4>
+                        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = e.dataTransfer.types.includes('text/plain') ? 'move' : 'copy'; e.currentTarget.classList.add('ring-1', 'ring-blue-400'); }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('ring-1', 'ring-blue-400'); }} onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('ring-1', 'ring-blue-400'); const raw = e.dataTransfer.getData('text/plain'); if (!raw) return; try { const data = JSON.parse(raw); if (data.source === 'left' && data.staffId && !nightShiftOrder.includes(data.staffId)) setNightShiftOrder([...nightShiftOrder, data.staffId]); else if (data.source === 'right' && data.fromIndex !== undefined) setNightShiftOrder([...nightShiftOrder.filter((_, i) => i !== data.fromIndex), data.staffId]); } catch (_) {} }}>
+                          {nightShiftOrder.map((id, idx) => {
+                            const staff = staffData.find(s => s.id === id);
+                            const isStart = nightShiftStartId === id;
+                            return (
+                              <div key={`${id}-${idx}`} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'right', staffId: id, fromIndex: idx })); e.dataTransfer.effectAllowed = 'move'; }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('ring-1', 'ring-inset', 'ring-blue-500'); }} onDragLeave={(e) => { e.currentTarget.classList.remove('ring-1', 'ring-inset', 'ring-blue-500'); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('ring-1', 'ring-inset', 'ring-blue-500'); const raw = e.dataTransfer.getData('text/plain'); if (!raw) return; try { const data = JSON.parse(raw); if (data.source === 'right' && data.fromIndex !== undefined) { if (data.fromIndex === idx) return; const newOrder = nightShiftOrder.filter((_, i) => i !== data.fromIndex); const insertIdx = data.fromIndex < idx ? idx - 1 : idx; newOrder.splice(insertIdx, 0, data.staffId); setNightShiftOrder(newOrder); } else if (data.source === 'left' && data.staffId && !nightShiftOrder.includes(data.staffId)) { const newOrder = [...nightShiftOrder]; newOrder.splice(idx, 0, data.staffId); setNightShiftOrder(newOrder); } } catch (_) {} }} className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm border border-blue-300 bg-white cursor-grab active:cursor-grabbing hover:border-blue-500 transition-all group">
+                                <span className="text-slate-400 shrink-0 select-none" aria-hidden>⋮⋮</span>
+                                <span className="text-stone-800 font-medium truncate min-w-0 flex-1">{idx + 1}. {staff?.name || id}</span>
+                                <button type="button" onClick={(ev) => { ev.stopPropagation(); setNightShiftStartId(id); autoAssign(id, dayShiftStartId); }} title="開始者に設定" className={`shrink-0 w-6 h-6 flex items-center justify-center rounded text-sm font-bold transition-all ${isStart ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-500 hover:bg-blue-300 hover:text-white'}`}>★</button>
+                                <button type="button" onClick={(ev) => { ev.stopPropagation(); setNightShiftOrder(nightShiftOrder.filter((_, i) => i !== idx)); }} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 shrink-0">削除</button>
+                              </div>
+                            );
+                          })}
+                          {nightShiftOrder.length === 0 && <p className="text-stone-500 text-sm py-2 text-center border border-dashed border-slate-300 rounded">ドロップで追加</p>}
+                        </div>
+                      </div>
+                    </div>
                 </div>
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-blue-200 rounded-xl bg-blue-50/50 overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-blue-100 border-b border-blue-200 shrink-0">開始選択</h4>
-                  <p className="text-xs text-stone-600 px-2 py-1 shrink-0">この月の開始する人を選ぶ</p>
-                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    {nightShiftOrder.map((id, idx) => {
-                      const staff = staffData.find(s => s.id === id);
-                      const isStart = nightShiftStartId === id;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => setNightShiftStartId(id)}
-                          className={`w-full text-left px-3 py-4 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-blue-500 border-blue-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:border-blue-400 hover:bg-blue-50'}`}
-                        >
-                          {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
-                        </button>
-                      );
-                    })}
-                    {nightShiftOrder.length === 0 && <p className="text-stone-500 text-sm py-4 text-center">順番を設定してください</p>}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {showDayShiftModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5 z-50">
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 w-full max-w-4xl max-h-[85vh] flex flex-col shadow-xl">
-              <div className="flex justify-between items-center mb-3 shrink-0">
-                <h3 className="font-bold text-stone-800 text-2xl">日勤順番リスト設定</h3>
-                <button onClick={() => setShowDayShiftModal(false)} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
-              </div>
-              <p className="text-sm text-stone-600 mb-3 shrink-0">左の職員を右へドラッグして順番を構成。右側でドラッグして並び替え可能。右端で「この月の開始」を選ぶと、その人から順に割り当てます。</p>
-              <div className="flex gap-4 flex-1 min-h-0">
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-slate-300 rounded-xl bg-white overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-slate-100 border-b border-slate-300 shrink-0">職員一覧</h4>
-                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    {staffData.filter(s => !dayShiftOrder.includes(s.id)).map(staff => (
-                      <div
-                        key={staff.id}
-                        draggable
-                        onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }}
-                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-emerald-400 hover:bg-emerald-50 transition-all"
-                      >
-                        {staff.name} ({staff.id})
-                      </div>
-                    ))}
-                    {staffData.filter(s => !dayShiftOrder.includes(s.id)).length === 0 && (
-                      <p className="text-stone-500 text-sm py-4 text-center">全員が右に追加されています</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-emerald-300 rounded-xl bg-emerald-50/30 overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-emerald-100 border-b border-emerald-300 shrink-0">順番（上から）</h4>
-                  <div
-                    className="flex-1 overflow-y-auto p-2 space-y-1 min-h-[120px]"
-                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-emerald-400'); }}
-                    onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('ring-2', 'ring-emerald-400'); }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      e.currentTarget.classList.remove('ring-2', 'ring-emerald-400');
-                      const raw = e.dataTransfer.getData('text/plain');
-                      if (!raw) return;
-                      try {
-                        const { source, staffId } = JSON.parse(raw);
-                        if (source === 'left' && staffId && !dayShiftOrder.includes(staffId)) setDayShiftOrder([...dayShiftOrder, staffId]);
-                      } catch (_) {}
-                    }}
-                  >
-                    {dayShiftOrder.map((id, idx) => {
-                      const staff = staffData.find(s => s.id === id);
-                      return (
-                        <div
-                          key={`${id}-${idx}`}
-                          draggable
-                          onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'right', staffId: id, fromIndex: idx })); e.dataTransfer.effectAllowed = 'move'; }}
-                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('ring-2', 'ring-inset', 'ring-emerald-500'); }}
-                          onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-emerald-500'); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            e.currentTarget.classList.remove('ring-2', 'ring-inset', 'ring-emerald-500');
-                            const raw = e.dataTransfer.getData('text/plain');
-                            if (!raw) return;
-                            try {
-                              const data = JSON.parse(raw);
-                              if (data.source === 'right' && data.fromIndex !== undefined) {
-                                if (data.fromIndex === idx) return;
-                                const newOrder = dayShiftOrder.filter((_, i) => i !== data.fromIndex);
-                                const insertIdx = data.fromIndex < idx ? idx - 1 : idx;
-                                newOrder.splice(insertIdx, 0, data.staffId);
-                                setDayShiftOrder(newOrder);
-                              } else if (data.source === 'left' && data.staffId && !dayShiftOrder.includes(data.staffId)) {
-                                const newOrder = [...dayShiftOrder];
-                                newOrder.splice(idx, 0, data.staffId);
-                                setDayShiftOrder(newOrder);
-                              }
-                            } catch (_) {}
-                          }}
-                          className="flex justify-between items-center px-3 py-2 rounded-lg border border-emerald-300 bg-white cursor-grab active:cursor-grabbing hover:border-emerald-500 transition-all group"
-                        >
-                          <span className="text-stone-800 font-medium">{idx + 1}. {staff?.name || id}</span>
-                          <button type="button" onClick={() => setDayShiftOrder(dayShiftOrder.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity">削除</button>
+                {/* 日勤順番 */}
+                <div className="flex flex-col flex-1 min-w-0 border border-slate-300 rounded-xl bg-slate-50/50 overflow-hidden">
+                  <h4 className="font-bold text-stone-800 text-base mb-1 px-2 py-1.5 shrink-0 flex items-center gap-1 bg-emerald-50">
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-sm">日勤</span>
+                    <span className="text-stone-500 font-normal text-sm">({dayShiftOrder.length}名)</span>
+                  </h4>
+                  <div className="flex gap-1.5 flex-1 min-h-0 overflow-hidden">
+                      <div className="flex-1 min-w-0 flex flex-col border border-slate-300 rounded-lg bg-white overflow-hidden">
+                        <h4 className="font-bold text-stone-700 px-1.5 py-1 bg-slate-100 border-b border-slate-300 shrink-0 text-sm">職員</h4>
+                        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+                          {staffData.filter(s => !dayShiftOrder.includes(s.id)).map(staff => (
+                            <div key={staff.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }} className="px-2 py-1.5 rounded text-sm border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-emerald-400 hover:bg-emerald-50 transition-all truncate">{staff.name}</div>
+                          ))}
+                          {staffData.filter(s => !dayShiftOrder.includes(s.id)).length === 0 && <p className="text-stone-500 text-sm py-2 text-center">全員追加済</p>}
                         </div>
-                      );
-                    })}
-                    {dayShiftOrder.length === 0 && (
-                      <p className="text-stone-500 text-sm py-4 text-center border-2 border-dashed border-slate-300 rounded-lg">ここにドロップで追加</p>
-                    )}
-                  </div>
+                      </div>
+                      <div className="flex-1 min-w-0 flex flex-col border border-emerald-300 rounded-lg bg-emerald-50/30 overflow-hidden">
+                        <h4 className="font-bold text-stone-700 px-1.5 py-1 bg-emerald-100 border-b border-emerald-300 shrink-0 text-sm">順番</h4>
+                        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = e.dataTransfer.types.includes('text/plain') ? 'move' : 'copy'; e.currentTarget.classList.add('ring-1', 'ring-emerald-400'); }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) e.currentTarget.classList.remove('ring-1', 'ring-emerald-400'); }} onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('ring-1', 'ring-emerald-400'); const raw = e.dataTransfer.getData('text/plain'); if (!raw) return; try { const data = JSON.parse(raw); if (data.source === 'left' && data.staffId && !dayShiftOrder.includes(data.staffId)) setDayShiftOrder([...dayShiftOrder, data.staffId]); else if (data.source === 'right' && data.fromIndex !== undefined) setDayShiftOrder([...dayShiftOrder.filter((_, i) => i !== data.fromIndex), data.staffId]); } catch (_) {} }}>
+                          {dayShiftOrder.map((id, idx) => {
+                            const staff = staffData.find(s => s.id === id);
+                            const isStart = dayShiftStartId === id;
+                            return (
+                              <div key={`${id}-${idx}`} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'right', staffId: id, fromIndex: idx })); e.dataTransfer.effectAllowed = 'move'; }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('ring-1', 'ring-inset', 'ring-emerald-500'); }} onDragLeave={(e) => { e.currentTarget.classList.remove('ring-1', 'ring-inset', 'ring-emerald-500'); }} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.remove('ring-1', 'ring-inset', 'ring-emerald-500'); const raw = e.dataTransfer.getData('text/plain'); if (!raw) return; try { const data = JSON.parse(raw); if (data.source === 'right' && data.fromIndex !== undefined) { if (data.fromIndex === idx) return; const newOrder = dayShiftOrder.filter((_, i) => i !== data.fromIndex); const insertIdx = data.fromIndex < idx ? idx - 1 : idx; newOrder.splice(insertIdx, 0, data.staffId); setDayShiftOrder(newOrder); } else if (data.source === 'left' && data.staffId && !dayShiftOrder.includes(data.staffId)) { const newOrder = [...dayShiftOrder]; newOrder.splice(idx, 0, data.staffId); setDayShiftOrder(newOrder); } } catch (_) {} }} className="flex items-center gap-1.5 px-2 py-1.5 rounded text-sm border border-emerald-300 bg-white cursor-grab active:cursor-grabbing hover:border-emerald-500 transition-all group">
+                                <span className="text-slate-400 shrink-0 select-none" aria-hidden>⋮⋮</span>
+                                <span className="text-stone-800 font-medium truncate min-w-0 flex-1">{idx + 1}. {staff?.name || id}</span>
+                                <button type="button" onClick={(ev) => { ev.stopPropagation(); setDayShiftStartId(id); autoAssign(nightShiftStartId, id); }} title="開始者に設定" className={`shrink-0 w-6 h-6 flex items-center justify-center rounded text-sm font-bold transition-all ${isStart ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500 hover:bg-emerald-300 hover:text-white'}`}>★</button>
+                                <button type="button" onClick={(ev) => { ev.stopPropagation(); setDayShiftOrder(dayShiftOrder.filter((_, i) => i !== idx)); }} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 shrink-0">削除</button>
+                              </div>
+                            );
+                          })}
+                          {dayShiftOrder.length === 0 && <p className="text-stone-500 text-sm py-2 text-center border border-dashed border-slate-300 rounded">ドロップで追加</p>}
+                        </div>
+                      </div>
+                    </div>
                 </div>
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-emerald-200 rounded-xl bg-emerald-50/50 overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-emerald-100 border-b border-emerald-200 shrink-0">開始選択</h4>
-                  <p className="text-xs text-stone-600 px-2 py-1 shrink-0">この月の開始する人を選ぶ</p>
-                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    {dayShiftOrder.map((id, idx) => {
-                      const staff = staffData.find(s => s.id === id);
-                      const isStart = dayShiftStartId === id;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => setDayShiftStartId(id)}
-                          className={`w-full text-left px-3 py-4 rounded-lg border-2 font-medium text-lg transition-all ${isStart ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-white border-slate-300 text-stone-800 hover:border-emerald-400 hover:bg-emerald-50'}`}
-                        >
-                          {isStart ? '★ ' : ''}{idx + 1}. {staff?.name || id}
-                        </button>
-                      );
-                    })}
-                    {dayShiftOrder.length === 0 && <p className="text-stone-500 text-sm py-4 text-center">順番を設定してください</p>}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
-        {showPairModal && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-5 z-50">
-            <div className="bg-slate-50 border-2 border-slate-400 rounded-2xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl">
-              <div className="flex justify-between items-center mb-3 shrink-0">
-                <h3 className="font-bold text-stone-800 text-2xl">ペア設定</h3>
-                <button onClick={() => { setShowPairModal(false); setPairIncompleteFirst(null); }} className="text-slate-600 hover:text-slate-800 transition-colors text-2xl font-bold">✕</button>
-              </div>
-              <p className="text-sm text-stone-600 mb-3 shrink-0">左の職員を右へドラッグしてペアを構成。1人目を「新規ペア」にドロップ→2人目をその行にドロップ。</p>
-              <div className="flex gap-4 flex-1 min-h-0">
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-slate-300 rounded-xl bg-white overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-slate-100 border-b border-slate-300 shrink-0">職員一覧</h4>
-                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    {staffData.filter(s => !pairs.some(p => p.person1 === s.id || p.person2 === s.id) && s.id !== pairIncompleteFirst).map(staff => (
-                      <div
-                        key={staff.id}
-                        draggable
-                        onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }}
-                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-orange-400 hover:bg-orange-50 transition-all"
-                      >
-                        {staff.name} ({staff.id})
-                      </div>
-                    ))}
-                    {staffData.filter(s => !pairs.some(p => p.person1 === s.id || p.person2 === s.id) && s.id !== pairIncompleteFirst).length === 0 && (
-                      <p className="text-stone-500 text-sm py-4 text-center">全員がペアに含まれています</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0 flex flex-col border-2 border-orange-300 rounded-xl bg-orange-50/30 overflow-hidden">
-                  <h4 className="font-bold text-stone-700 px-3 py-2 bg-orange-100 border-b border-orange-300 shrink-0">ペア一覧</h4>
-                  <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-[120px]">
-                    {pairs.map((pair, idx) => {
-                      const staff1 = staffData.find(s => s.id === pair.person1);
-                      const staff2 = staffData.find(s => s.id === pair.person2);
-                      return (
-                        <div key={idx} className="flex justify-between items-center px-3 py-2 rounded-lg border border-orange-300 bg-white transition-all group">
-                          <span className="text-stone-800 font-medium">{staff1?.name || pair.person1} ↔ {staff2?.name || pair.person2}</span>
-                          <button type="button" onClick={() => setPairs(pairs.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity">削除</button>
+                {/* ペア設定 */}
+                <div className="flex flex-col flex-1 min-w-0 border border-slate-300 rounded-xl bg-slate-50/50 overflow-hidden">
+                  <h4 className="font-bold text-stone-800 text-base mb-1 px-2 py-1.5 shrink-0 flex items-center gap-1 bg-orange-50">
+                    <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 text-sm">ペア</span>
+                    <span className="text-stone-500 font-normal text-sm">({pairs.length}組)</span>
+                  </h4>
+                  <div className="flex gap-1.5 flex-1 min-h-0 overflow-hidden">
+                      <div className="flex-1 min-w-0 flex flex-col border border-slate-300 rounded-lg bg-white overflow-hidden">
+                        <h4 className="font-bold text-stone-700 px-1.5 py-1 bg-slate-100 border-b border-slate-300 shrink-0 text-sm">職員</h4>
+                        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+                          {staffData.filter(s => !pairs.some(p => p.person1 === s.id || p.person2 === s.id) && s.id !== pairIncompleteFirst).map(staff => (
+                            <div key={staff.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ source: 'left', staffId: staff.id })); e.dataTransfer.effectAllowed = 'copy'; }} className="px-2 py-1.5 rounded text-sm border border-slate-300 bg-white cursor-grab active:cursor-grabbing hover:border-orange-400 hover:bg-orange-50 transition-all truncate">{staff.name}</div>
+                          ))}
+                          {staffData.filter(s => !pairs.some(p => p.person1 === s.id || p.person2 === s.id) && s.id !== pairIncompleteFirst).length === 0 && <p className="text-stone-500 text-sm py-2 text-center">全員ペア済</p>}
                         </div>
-                      );
-                    })}
-                    {pairIncompleteFirst && (() => {
-                      const staff = staffData.find(s => s.id === pairIncompleteFirst);
-                      return (
-                        <div
-                          className="px-3 py-2 rounded-lg border-2 border-dashed border-orange-400 bg-orange-50 min-h-[44px] flex items-center justify-between"
-                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-orange-400'); }}
-                          onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-orange-400'); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            e.currentTarget.classList.remove('ring-2', 'ring-orange-400');
-                            const raw = e.dataTransfer.getData('text/plain');
-                            if (!raw) return;
-                            try {
-                              const { source, staffId } = JSON.parse(raw);
-                              if (source === 'left' && staffId && staffId !== pairIncompleteFirst) {
-                                addPair(pairIncompleteFirst, staffId);
-                                setPairIncompleteFirst(null);
-                              }
-                            } catch (_) {}
-                          }}
-                        >
-                          <span className="text-stone-700">{staff?.name || pairIncompleteFirst} — </span>
-                          <span className="text-orange-600 text-sm font-medium">2人目をここにドロップ</span>
-                          <button type="button" onClick={() => setPairIncompleteFirst(null)} className="text-slate-500 hover:text-slate-700 text-sm">キャンセル</button>
-                        </div>
-                      );
-                    })()}
-                    {!pairIncompleteFirst && (
-                      <div
-                        className="text-stone-500 text-sm py-4 text-center border-2 border-dashed border-slate-300 rounded-lg min-h-[52px] flex items-center justify-center"
-                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-orange-400', 'bg-orange-50'); }}
-                        onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-orange-400', 'bg-orange-50'); }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          e.currentTarget.classList.remove('ring-2', 'ring-orange-400', 'bg-orange-50');
-                          const raw = e.dataTransfer.getData('text/plain');
-                          if (!raw) return;
-                          try {
-                            const { source, staffId } = JSON.parse(raw);
-                            if (source === 'left' && staffId) setPairIncompleteFirst(staffId);
-                          } catch (_) {}
-                        }}
-                      >
-                        新規ペア: 1人目をここにドロップ
                       </div>
-                    )}
-                  </div>
+                      <div className="flex-1 min-w-0 flex flex-col border border-orange-300 rounded-lg bg-orange-50/30 overflow-hidden">
+                        <h4 className="font-bold text-stone-700 px-1.5 py-1 bg-orange-100 border-b border-orange-300 shrink-0 text-sm">ペア一覧</h4>
+                        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
+                          {pairs.map((pair, idx) => (
+                            <div key={idx} className="flex justify-between items-center px-2 py-1.5 rounded text-sm border border-orange-300 bg-white transition-all group">
+                              <span className="text-stone-800 font-medium truncate min-w-0">{staffData.find(s => s.id === pair.person1)?.name || pair.person1} ↔ {staffData.find(s => s.id === pair.person2)?.name || pair.person2}</span>
+                              <button type="button" onClick={() => setPairs(pairs.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-600 font-semibold text-sm opacity-0 group-hover:opacity-100 shrink-0">削除</button>
+                            </div>
+                          ))}
+                          {pairIncompleteFirst && (
+                            <div className="px-2 py-1.5 rounded border border-dashed border-orange-400 bg-orange-50 min-h-[40px] flex items-center justify-between gap-1 text-sm" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-1', 'ring-orange-400'); }} onDragLeave={(e) => { e.currentTarget.classList.remove('ring-1', 'ring-orange-400'); }} onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('ring-1', 'ring-orange-400'); const raw = e.dataTransfer.getData('text/plain'); if (!raw) return; try { const { source, staffId } = JSON.parse(raw); if (source === 'left' && staffId && staffId !== pairIncompleteFirst) { addPair(pairIncompleteFirst, staffId); setPairIncompleteFirst(null); } } catch (_) {} }}>
+                              <span className="text-stone-700 truncate">{staffData.find(s => s.id === pairIncompleteFirst)?.name || pairIncompleteFirst} — </span>
+                              <span className="text-orange-600 text-sm font-medium shrink-0">2人目ドロップ</span>
+                              <button type="button" onClick={() => setPairIncompleteFirst(null)} className="text-slate-500 hover:text-slate-700 text-sm shrink-0">×</button>
+                            </div>
+                          )}
+                          {!pairIncompleteFirst && (
+                            <div className="text-stone-500 text-sm py-2 text-center border border-dashed border-slate-300 rounded min-h-[44px] flex items-center justify-center" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-1', 'ring-orange-400', 'bg-orange-50'); }} onDragLeave={(e) => { e.currentTarget.classList.remove('ring-1', 'ring-orange-400', 'bg-orange-50'); }} onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('ring-1', 'ring-orange-400', 'bg-orange-50'); const raw = e.dataTransfer.getData('text/plain'); if (!raw) return; try { const { source, staffId } = JSON.parse(raw); if (source === 'left' && staffId) setPairIncompleteFirst(staffId); } catch (_) {} }}>1人目をドロップ</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                 </div>
               </div>
             </div>

@@ -96,4 +96,14 @@ body {
   .btn-add {
     @apply btn-panel bg-emerald-600 hover:bg-emerald-500 text-white shadow-md;
   }
+  /* 当番表・週休・配置表セクションのアクションボタン統一 */
+  .btn-section {
+    @apply min-h-[40px] inline-flex items-center justify-center px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-all shrink-0;
+  }
+  .btn-section-nav {
+    @apply btn-section bg-stone-100 hover:bg-stone-200 text-stone-800 border-stone-400;
+  }
+  .btn-section-print {
+    @apply btn-section bg-slate-600 hover:bg-slate-500 text-white border-slate-700 shadow-sm;
+  }
 }

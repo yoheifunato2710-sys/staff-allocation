@@ -164,7 +164,6 @@ function setUnassignedAmPmFromSlots(newAllocation, dateStr, modalityData, staffD
     if (s && !Array.isArray(s)) {
       (s.am || []).forEach(id => inAnyAm.add(id));
       (s.pm || []).forEach(id => inAnyPm.add(id));
-      if (isUserCreatedModality(mod)) (s.extra || []).forEach(id => { inAnyAm.add(id); inAnyPm.add(id); });
     }
   });
   const available = staffData.filter(s => !unavailableAtStart.has(s.id)).map(s => s.id);
@@ -722,7 +721,6 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
           if (slot && !Array.isArray(slot)) {
             (slot.am || []).forEach(id => amList.push(id));
             (slot.pm || []).forEach(id => pmList.push(id));
-            if (isUserCreatedModality(mod) && (slot.extra || []).length) (slot.extra || []).forEach(id => { amList.push(id); pmList.push(id); });
           }
         });
         const countAm = {};
@@ -778,7 +776,6 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
           if (slot && !Array.isArray(slot)) {
             if (src.slot === 'am' && slot.am) slot.am = slot.am.filter(id => id !== staffId);
             if (src.slot === 'pm' && slot.pm) slot.pm = slot.pm.filter(id => id !== staffId);
-            if (src.slot === 'extra' && slot.extra) slot.extra = slot.extra.filter(id => id !== staffId);
           }
         }
       };
@@ -792,7 +789,6 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
           const slot = day[tgt.modId];
           if (Array.isArray(slot)) return;
           if (tgt.slot === 'am' && !(slot.am || []).includes(staffId)) slot.am = [...(slot.am || []), staffId];
-          if (tgt.slot === 'extra' && !(slot.extra || []).includes(staffId)) slot.extra = [...(slot.extra || []), staffId];
           if (tgt.slot === 'pm') {
             const mod = modalityData.find(m => m.id === tgt.modId || m.id === parseInt(tgt.modId, 10));
             const isKyukyuPm = mod?.name === '救命(日勤)';
@@ -863,9 +859,6 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
       : (allocation[dateStr]?._unassignedAm ?? allocation[dateStr]?._unassigned ?? []);
     return rawIds.filter(id => !scheduleStaffThisDay.has(id));
   } : null;
-  const getAssignableForSlot = (dateStr, slot) => getAssignableUnassigned(dateStr, slot === 'extra' ? 'am' : slot);
-  const hasUserCreatedMod = (modalityData || []).some(m => isUserCreatedModality(m));
-
   if (cal.length === 0) return null;
   const scheduleRows = [
     { key: 'dayShift', label: '日勤者', getVal: (d) => (schedule[d.date]?.dayShiftManual ?? schedule[d.date]?.dayShift) || null },
@@ -908,9 +901,8 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
               const isSat = dow === 6;
               const dateColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-800';
               const weekdayColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-600';
-              const dayColSpan = hasUserCreatedMod ? 3 : 2;
               return (
-                <th key={day.date} colSpan={dayColSpan} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
+                <th key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
                   <div className={`font-semibold ${dateColor}`}>{(day.date || '').slice(5).replace('-', '/')}</div>
                   <div className={`text-xs ${weekdayColor}`}>{day.dayOfWeek}</div>
                 </th>
@@ -923,28 +915,26 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
               <React.Fragment key={day.date}>
                 <th className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-amber-50/80 ${dayColumnDupBg(day.date)}`}>AM</th>
                 <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-sky-50/80 ${dayColumnDupBg(day.date)}`}>PM</th>
-                {hasUserCreatedMod && <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-emerald-50/80 ${dayColumnDupBg(day.date)}`}>追加</th>}
               </React.Fragment>
             ))}
           </tr>
         </thead>
         <tbody>
           {(modalityData || []).map(mod => (
-            <tr key={mod.id} className="hover:bg-slate-50/50">
+            <React.Fragment key={mod.id}>
+            <tr className="hover:bg-slate-50/50">
               <td className="border border-slate-300 p-0.5 sticky left-0 bg-slate-50 z-10 font-semibold text-stone-800 align-top">{mod.name}</td>
               {cal.map(day => {
                 const dateStr = day.date;
                 const slot = allocation[dateStr]?.[mod.id];
                 const am = Array.isArray(slot) ? slot : (slot?.am || []);
                 const pm = Array.isArray(slot) ? [] : (slot?.pm || []);
-                const extra = isUserCreatedModality(mod) ? (Array.isArray(slot) ? [] : (slot?.extra || [])) : [];
                 const isWeekend = day.isWeekend || day.isHoliday;
                 const { requiredAm, requiredPm } = getRequiredForModality(mod, dateStr);
                 const isShortAm = !isWeekend && am.length < requiredAm;
                 const isShortPm = !isWeekend && pm.length < requiredPm;
                 const cellBgAm = isShortAm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-amber-50/30';
                 const cellBgPm = isShortPm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-sky-50/30';
-                const cellBgExtra = isWeekend ? 'bg-slate-50' : 'bg-emerald-50/30';
                 const handleDropAm = (editable && moveAllocationStaff) ? (e) => {
                   e.preventDefault();
                   const raw = e.dataTransfer.getData('text/plain');
@@ -969,19 +959,6 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
                     moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
                   } catch (_) {}
                 } : undefined;
-                const handleDropExtra = isUserCreatedModality(mod) && (editable && moveAllocationStaff) ? (e) => {
-                  e.preventDefault();
-                  const raw = e.dataTransfer.getData('text/plain');
-                  if (!raw) return;
-                  try {
-                    const data = JSON.parse(raw);
-                    if (data.type !== 'allocation-staff' || data.dateStr !== dateStr) return;
-                    const to = { type: 'modality', modId: mod.id, slot: 'extra' };
-                    if (data.fromSource.type === to.type && data.fromSource.modId === to.modId && data.fromSource.slot === to.slot) return;
-                    moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
-                  } catch (_) {}
-                } : undefined;
-                const openAssignPickerExtra = () => isUserCreatedModality(mod) && setAssignPicker({ dateStr, modId: mod.id, slot: 'extra' });
                 return (
                   <React.Fragment key={day.date}>
                     <td
@@ -990,15 +967,30 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
                       onDrop={editable ? handleDropAm : undefined}
                     >
                       <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
-                        {am.length ? [...am].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                          <span
-                            key={id}
-                            draggable={editable}
-                            className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'am') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                            title={name(id)}
-                            onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'am' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
-                          >{name(id)}</span>
-                        )) : editable ? (
+                        {am.length ? (
+                          <>
+                            {[...am].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
+                              <span
+                                key={id}
+                                draggable={editable}
+                                className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'am') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                                title={name(id)}
+                                onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'am' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                              >{name(id)}</span>
+                            ))}
+                            <span className="block min-h-[1.25rem]" aria-hidden="true" />
+                            {editable && (
+                              <span
+                                className="block min-h-[1.25rem] flex-1 cursor-pointer"
+                                role="button"
+                                tabIndex={0}
+                                onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'am' })}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'am' }); } }}
+                                aria-label="未配置から割り当て"
+                              />
+                            )}
+                          </>
+                        ) : editable ? (
                           <span
                             role="button"
                             tabIndex={0}
@@ -1017,15 +1009,30 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
                       onDrop={editable ? handleDropPm : undefined}
                     >
                       <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
-                        {pm.length ? [...pm].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                          <span
-                            key={id}
-                            draggable={editable}
-                            className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'pm') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                            title={name(id)}
-                            onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'pm' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
-                          >{name(id)}</span>
-                        )) : editable ? (
+                        {pm.length ? (
+                          <>
+                            {[...pm].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
+                              <span
+                                key={id}
+                                draggable={editable}
+                                className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'pm') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                                title={name(id)}
+                                onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'pm' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+                              >{name(id)}</span>
+                            ))}
+                            <span className="block min-h-[1.25rem]" aria-hidden="true" />
+                            {editable && (
+                              <span
+                                className="block min-h-[1.25rem] flex-1 cursor-pointer"
+                                role="button"
+                                tabIndex={0}
+                                onDoubleClick={() => setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' })}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAssignPicker({ dateStr, modId: mod.id, slot: 'pm' }); } }}
+                                aria-label="未配置から割り当て"
+                              />
+                            )}
+                          </>
+                        ) : editable ? (
                           <span
                             role="button"
                             tabIndex={0}
@@ -1038,39 +1045,11 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
                         )}
                       </div>
                     </td>
-                    {hasUserCreatedMod && (
-                      <td
-                        className={`border border-slate-300 p-0.5 min-w-[6rem] align-top text-sm ${cellBgExtra} ${dayColumnDupBg(dateStr)}`}
-                        onDragOver={handleDropExtra ? (e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; } : undefined}
-                        onDrop={handleDropExtra}
-                      >
-                        <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
-                          {isUserCreatedModality(mod) ? (extra.length ? [...extra].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                            <span
-                              key={id}
-                              draggable={editable}
-                              className={`text-base font-medium whitespace-nowrap truncate block min-w-0 ${isDupRed(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlot(dateStr, id, mod.id, 'extra') ? 'text-red-600' : 'text-stone-800'} ${editable ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                              title={name(id)}
-                              onDragStart={editable ? (e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'extra' } })); e.dataTransfer.effectAllowed = 'move'; } : undefined}
-                            >{name(id)}</span>
-                          )) : editable ? (
-                            <span
-                              role="button"
-                              tabIndex={0}
-                              className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
-                              onDoubleClick={openAssignPickerExtra}
-                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAssignPickerExtra(); } }}
-                            >－</span>
-                          ) : (
-                            <span className="text-stone-400">－</span>
-                          )) : <span className="text-stone-300">－</span>}
-                        </div>
-                      </td>
-                    )}
                   </React.Fragment>
                 );
               })}
             </tr>
+          </React.Fragment>
           ))}
           {scheduleRows.map(({ key, label, getVal }) => (
             <tr key={key} className="bg-slate-100/50">
@@ -1079,7 +1058,7 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
                 const staffId = getVal(day);
                 const isWeekend = day.isWeekend || day.isHoliday;
                 return (
-                  <td key={day.date} colSpan={hasUserCreatedMod ? 3 : 2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-middle text-base ${isWeekend ? 'bg-slate-50' : 'bg-white'}`}>
+                  <td key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-middle text-base ${isWeekend ? 'bg-slate-50' : 'bg-white'}`}>
                     {staffId ? <span className="font-medium whitespace-nowrap truncate block min-w-0 text-stone-800" title={name(staffId)}>{name(staffId)}</span> : <span className="text-stone-400">－</span>}
                   </td>
                 );
@@ -1136,7 +1115,7 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
                 })
               ) : '－';
               return (
-                <td key={day.date} colSpan={hasUserCreatedMod ? 3 : 2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-top text-base whitespace-pre-line font-medium text-stone-800 ${day.isWeekend || day.isHoliday ? 'bg-slate-50' : 'bg-white'} ${dayColumnDupBg(dateStr)}`} {...dropProps}>
+                <td key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-top text-base whitespace-pre-line font-medium text-stone-800 ${day.isWeekend || day.isHoliday ? 'bg-slate-50' : 'bg-white'} ${dayColumnDupBg(dateStr)}`} {...dropProps}>
                   {content}
                 </td>
               );
@@ -1205,11 +1184,6 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
                   >
                     <div className="flex flex-col gap-0.5 min-h-[1.25rem]">{renderUnassigned('pm', idsPm)}</div>
                   </td>
-                  {hasUserCreatedMod && (
-                    <td className={`${cellClassBase} bg-slate-100/50`}>
-                      <div className="flex flex-col gap-0.5 min-h-[1.25rem]"><span className="text-stone-300">－</span></div>
-                    </td>
-                  )}
                 </React.Fragment>
               );
             })}
@@ -1229,11 +1203,11 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
           role="dialog"
         >
           <div className="p-3 border-b border-slate-200 font-semibold text-stone-800">
-            未配置から割り当て（{assignPicker.dateStr} {assignPicker.slot === 'am' ? 'AM' : assignPicker.slot === 'pm' ? 'PM' : '追加'}）
+            未配置から割り当て（{assignPicker.dateStr} {assignPicker.slot === 'am' ? 'AM' : 'PM'}）
           </div>
           <div className="overflow-y-auto p-2 flex-1">
             {(() => {
-              const ids = getAssignableForSlot(assignPicker.dateStr, assignPicker.slot);
+              const ids = getAssignableUnassigned(assignPicker.dateStr, assignPicker.slot);
               if (ids.length === 0) {
                 return <p className="text-stone-500 text-sm py-2">割り当て可能な未配置職員がいません。</p>;
               }
@@ -1784,16 +1758,11 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
         const modName = modality?.name || `M${modalityId}`;
         const am = Array.isArray(slotData) ? slotData : (slotData?.am || []);
         const pm = Array.isArray(slotData) ? [] : (slotData?.pm || []);
-        const extra = isUserCreatedModality(modality) ? (Array.isArray(slotData) ? [] : (slotData?.extra || [])) : [];
         const inAm = am.includes(staffId);
         const inPm = pm.includes(staffId);
-        const inExtra = extra.includes(staffId);
         if (inAm && inPm) return `${modName} AM/PM`;
-        if (inAm && inExtra) return `${modName} AM/追加`;
-        if (inPm && inExtra) return `${modName} PM/追加`;
         if (inAm) return `${modName} AM`;
         if (inPm) return `${modName} PM`;
-        if (inExtra) return `${modName} 追加`;
       }
     }
     return '-';
@@ -1818,7 +1787,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
           if (slot && !Array.isArray(slot)) {
             if (src.slot === 'am' && slot.am) slot.am = slot.am.filter(id => id !== staffId);
             if (src.slot === 'pm' && slot.pm) slot.pm = slot.pm.filter(id => id !== staffId);
-            if (src.slot === 'extra' && slot.extra) slot.extra = slot.extra.filter(id => id !== staffId);
           }
         }
       };
@@ -1832,7 +1800,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
           const slot = day[tgt.modId];
           if (Array.isArray(slot)) return;
           if (tgt.slot === 'am' && !slot.am.includes(staffId)) slot.am = [...(slot.am || []), staffId];
-          if (tgt.slot === 'extra' && !(slot.extra || []).includes(staffId)) slot.extra = [...(slot.extra || []), staffId];
           if (tgt.slot === 'pm') {
             const mod = modalityData.find(m => m.id === tgt.modId || m.id === parseInt(tgt.modId, 10));
             const isKyukyuPm = mod?.name === '救命(日勤)';
@@ -1910,7 +1877,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
       : (allocation[dateStr]?._unassignedAm ?? allocation[dateStr]?._unassigned ?? []);
     return rawIds.filter(id => !scheduleStaffThisDay.has(id));
   };
-  const getAssignableUnassignedForSlot = (dateStr, slot) => getAssignableUnassigned(dateStr, slot === 'extra' ? 'am' : slot);
 
   useEffect(() => {
     if (!allocationLoaded.current) return;
@@ -2005,7 +1971,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
         if (slot && !Array.isArray(slot)) {
           (slot.am || []).forEach(id => amList.push(id));
           (slot.pm || []).forEach(id => pmList.push(id));
-          if (isUserCreatedModality(mod) && (slot.extra || []).length) (slot.extra || []).forEach(id => { amList.push(id); pmList.push(id); });
         }
       });
       const countAm = {};
@@ -2046,8 +2011,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
     return (duplicateInAMByDate[dateStr]?.has(id) || duplicateInPMByDate[dateStr]?.has(id)) ?? false;
   };
 
-  const hasUserCreatedModScreen = modalityData.some(m => isUserCreatedModality(m));
-
   const colorMap = {
     '16': 'bg-blue-100 text-blue-800 border-blue-200',
     '日勤': 'bg-green-100 text-green-800 border-green-200',
@@ -2080,11 +2043,11 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
             aria-label="未配置の職員を選択"
           >
             <div className="p-3 border-b border-slate-200 bg-stone-50 font-semibold text-stone-800">
-              未配置から割り当て（{assignPicker.dateStr} {assignPicker.slot === 'am' ? 'AM' : assignPicker.slot === 'pm' ? 'PM' : '追加'}）
+              未配置から割り当て（{assignPicker.dateStr} {assignPicker.slot === 'am' ? 'AM' : 'PM'}）
             </div>
             <div className="overflow-y-auto p-2 flex-1">
               {(() => {
-                const ids = getAssignableUnassignedForSlot(assignPicker.dateStr, assignPicker.slot);
+                const ids = getAssignableUnassigned(assignPicker.dateStr, assignPicker.slot);
                 const name = (id) => staffData.find(s => s.id === id)?.name || id;
                 if (ids.length === 0) {
                   return <p className="text-stone-500 text-sm py-2">割り当て可能な未配置職員がいません。</p>;
@@ -2263,9 +2226,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                       const isSat = dow === 6;
                       const dateColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-800';
                       const weekdayColor = isSunOrHoliday ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-stone-600';
-                      const dayColSpan = hasUserCreatedModScreen ? 3 : 2;
                       return (
-                      <th key={day.date} colSpan={dayColSpan} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
+                      <th key={day.date} colSpan={2} className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[80px] text-center ${dayColumnDupBg(day.date)} ${day.isWeekend || day.isHoliday ? 'bg-slate-100' : ''}`}>
                         <div className={`font-semibold ${dateColor}`}>{(day.date || '').slice(5).replace('-', '/')}</div>
                         <div className={`text-xs ${weekdayColor}`}>{day.dayOfWeek}</div>
                       </th>
@@ -2277,7 +2239,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                       <React.Fragment key={day.date}>
                         <th className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-amber-50/80 ${dayColumnDupBg(day.date)}`}>AM</th>
                         <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-sky-50/80 ${dayColumnDupBg(day.date)}`}>PM</th>
-                        {hasUserCreatedModScreen && <th className={`border border-slate-300 p-0.5 min-w-[6rem] text-sm font-semibold text-stone-600 bg-emerald-50/80 ${dayColumnDupBg(day.date)}`}>追加</th>}
                       </React.Fragment>
                     ))}
                   </tr>
@@ -2288,10 +2249,9 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                       const slot = allocation[day.date]?.[mod.id];
                       const am = Array.isArray(slot) ? slot : (slot?.am || []);
                       const pm = Array.isArray(slot) ? [] : (slot?.pm || []);
-                      const extra = isUserCreatedModality(mod) ? (Array.isArray(slot) ? [] : (slot?.extra || [])) : [];
-                      return { am, pm, extra };
+                      return { am, pm };
                     });
-                    const maxLines = Math.max(1, ...slotDataByDate.flatMap(s => Math.max(s.am.length, s.pm.length, s.extra?.length || 0)));
+                    const maxLines = Math.max(1, ...slotDataByDate.flatMap(s => Math.max(s.am.length, s.pm.length)));
                     const rowMinHeight = `${Math.max(2, maxLines) * 1.25}rem`;
                     return (
                       <React.Fragment key={mod.id}>
@@ -2304,7 +2264,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                             const slot = allocation[dateStr]?.[mod.id];
                             const am = Array.isArray(slot) ? slot : (slot?.am || []);
                             const pm = Array.isArray(slot) ? [] : (slot?.pm || []);
-                            const extra = isUserCreatedModality(mod) ? (Array.isArray(slot) ? [] : (slot?.extra || [])) : [];
                             const name = (id) => staffData.find(s => s.id === id)?.name || id;
                             const isWeekend = day.isWeekend || day.isHoliday;
                             const { requiredAm, requiredPm } = getRequiredForModality(mod, dateStr);
@@ -2312,7 +2271,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                             const isShortPm = !isWeekend && pm.length < requiredPm;
                             const cellBgAm = isShortAm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-amber-50/30';
                             const cellBgPm = isShortPm ? 'bg-stone-300' : isWeekend ? 'bg-slate-50' : 'bg-sky-50/30';
-                            const cellBgExtra = isWeekend ? 'bg-slate-50' : 'bg-emerald-50/30';
                             const handleDropAm = (e) => {
                               e.preventDefault();
                               const raw = e.dataTransfer.getData('text/plain');
@@ -2337,19 +2295,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                 moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
                               } catch (_) {}
                             };
-                            const handleDropExtra = isUserCreatedModality(mod) ? (e) => {
-                              e.preventDefault();
-                              const raw = e.dataTransfer.getData('text/plain');
-                              if (!raw) return;
-                              try {
-                                const data = JSON.parse(raw);
-                                if (data.type !== 'allocation-staff' || data.dateStr !== dateStr) return;
-                                const to = { type: 'modality', modId: mod.id, slot: 'extra' };
-                                if (data.fromSource.type === to.type && data.fromSource.modId === to.modId && data.fromSource.slot === to.slot) return;
-                                moveAllocationStaff(dateStr, data.staffId, data.fromSource, to);
-                              } catch (_) {}
-                            } : undefined;
-                            const openAssignPickerExtra = () => isUserCreatedModality(mod) && setAssignPicker({ dateStr, modId: mod.id, slot: 'extra' });
                             return (
                               <React.Fragment key={day.date}>
                                 <td
@@ -2358,20 +2303,25 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                   onDrop={handleDropAm}
                                 >
                                   <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
-                                    {am.length ? [...am].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                                      <span
-                                        key={id}
-                                        draggable
-                                        className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'am') ? 'text-red-600' : 'text-stone-800'}`}
-                                        title={name(id)}
-                                        onDragStart={(e) => {
-                                          e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'am' } }));
-                                          e.dataTransfer.effectAllowed = 'move';
-                                        }}
-                                      >
-                                        {name(id)}
-                                      </span>
-                                    )) : (
+                                    {am.length ? (
+                                      <>
+                                        {[...am].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
+                                          <span
+                                            key={id}
+                                            draggable
+                                            className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'am') ? 'text-red-600' : 'text-stone-800'}`}
+                                            title={name(id)}
+                                            onDragStart={(e) => {
+                                              e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'am' } }));
+                                              e.dataTransfer.effectAllowed = 'move';
+                                            }}
+                                          >
+                                            {name(id)}
+                                          </span>
+                                        ))}
+                                        <span className="block min-h-[1.25rem]" aria-hidden="true" />
+                                      </>
+                                    ) : (
                                       <span
                                         role="button"
                                         tabIndex={0}
@@ -2398,20 +2348,25 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                   onDrop={handleDropPm}
                                 >
                                   <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
-                                    {pm.length ? [...pm].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                                      <span
-                                        key={id}
-                                        draggable
-                                        className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'pm') ? 'text-red-600' : 'text-stone-800'}`}
-                                        title={name(id)}
-                                        onDragStart={(e) => {
-                                          e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'pm' } }));
-                                          e.dataTransfer.effectAllowed = 'move';
-                                        }}
-                                      >
-                                        {name(id)}
-                                      </span>
-                                    )) : (
+                                    {pm.length ? (
+                                      <>
+                                        {[...pm].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
+                                          <span
+                                            key={id}
+                                            draggable
+                                            className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, false) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'pm') ? 'text-red-600' : 'text-stone-800'}`}
+                                            title={name(id)}
+                                            onDragStart={(e) => {
+                                              e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'pm' } }));
+                                              e.dataTransfer.effectAllowed = 'move';
+                                            }}
+                                          >
+                                            {name(id)}
+                                          </span>
+                                        ))}
+                                        <span className="block min-h-[1.25rem]" aria-hidden="true" />
+                                      </>
+                                    ) : (
                                       <span
                                         role="button"
                                         tabIndex={0}
@@ -2432,50 +2387,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                     />
                                   </div>
                                 </td>
-                                {hasUserCreatedModScreen && (
-                                  <td
-                                    className={`border border-slate-300 p-0.5 min-w-[6rem] align-top text-sm ${cellBgExtra} ${dayColumnDupBg(dateStr)}`}
-                                    onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes('text/plain')) e.dataTransfer.dropEffect = 'move'; }}
-                                    onDrop={handleDropExtra}
-                                  >
-                                    <div className="flex flex-col gap-0.5 min-h-[1.25rem]">
-                                      {isUserCreatedModality(mod) ? (extra.length ? [...extra].sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).map(id => (
-                                        <span
-                                          key={id}
-                                          draggable
-                                          className={`text-base font-medium cursor-grab active:cursor-grabbing whitespace-nowrap truncate block min-w-0 ${isDuplicateGrey(dateStr, id, true) ? 'bg-red-100 text-red-700 px-0.5 rounded' : isManualSlotInScreen(dateStr, id, mod.id, 'extra') ? 'text-red-600' : 'text-stone-800'}`}
-                                          title={name(id)}
-                                          onDragStart={(e) => {
-                                            e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'allocation-staff', dateStr, staffId: id, fromSource: { type: 'modality', modId: mod.id, slot: 'extra' } }));
-                                            e.dataTransfer.effectAllowed = 'move';
-                                          }}
-                                        >
-                                          {name(id)}
-                                        </span>
-                                      )) : (
-                                        <span
-                                          role="button"
-                                          tabIndex={0}
-                                          className="text-stone-400 hover:text-stone-600 cursor-pointer select-none"
-                                          onDoubleClick={openAssignPickerExtra}
-                                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAssignPickerExtra(); } }}
-                                        >
-                                          －
-                                        </span>
-                                      )) : <span className="text-stone-300">－</span>}
-                                      {isUserCreatedModality(mod) && (
-                                        <span
-                                          className="block min-h-[1.25rem] flex-1 cursor-pointer"
-                                          role="button"
-                                          tabIndex={0}
-                                          onDoubleClick={openAssignPickerExtra}
-                                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAssignPickerExtra(); } }}
-                                          aria-label="未配置から割り当て"
-                                        />
-                                      )}
-                                    </div>
-                                  </td>
-                                )}
                               </React.Fragment>
                             );
                           })}
@@ -2543,7 +2454,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                               return (
                                 <td
                                   key={day.date}
-                                  colSpan={hasUserCreatedModScreen ? 3 : 2}
+                                  colSpan={2}
                                   className={`border border-slate-300 border-l-2 border-l-slate-600 p-0.5 min-w-[8rem] text-left align-middle text-base ${dayColumnDupBg(day.date)} ${isWeekend ? 'bg-slate-50' : 'bg-white'}`}
                                 >
                                   {staffId ? <span className={`font-medium whitespace-nowrap truncate block min-w-0 ${isDup ? 'bg-stone-300 text-stone-900 px-1 rounded' : 'text-stone-800'}`} title={name(staffId)}>{name(staffId)}</span> : <span className="text-stone-400">－</span>}
@@ -2603,7 +2514,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                               })
                             ) : <span className="text-stone-400">－</span>;
                             return (
-                              <td key={day.date} colSpan={hasUserCreatedModScreen ? 3 : 2} className={baseClass} {...dropProps}>{content}</td>
+                              <td key={day.date} colSpan={2} className={baseClass} {...dropProps}>{content}</td>
                             );
                           })}
                         </tr>
@@ -2679,11 +2590,6 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                                 >
                                   <div className="flex flex-col gap-0.5 min-h-[1.25rem]">{renderUnassignedList('pm', idsPm)}</div>
                                 </td>
-                                {hasUserCreatedModScreen && (
-                                  <td className={`${cellClassBase} bg-slate-100/50 ${dayColumnDupBg(dateStr)}`}>
-                                    <div className="flex flex-col gap-0.5 min-h-[1.25rem]"><span className="text-stone-300">－</span></div>
-                                  </td>
-                                )}
                               </React.Fragment>
                             );
                           })}

@@ -1,38 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useData } from '../context/DataContext';
+import { getHolidays } from '../utils/holidays';
+import { getLeaveData, setLeaveData as persistLeaveData } from '../utils/storage';
 
 const leaveTypes = ['週休', '年休', 'リフ休', '特別休', '出張'];
-
-/** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
-function getHolidays(year) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const set = new Set();
-  set.add(`${year}-01-01`);
-  set.add(`${year}-02-11`);
-  set.add(`${year}-02-23`);
-  set.add(`${year}-04-29`);
-  set.add(`${year}-05-03`);
-  set.add(`${year}-05-04`);
-  set.add(`${year}-05-05`);
-  set.add(`${year}-08-11`);
-  set.add(`${year}-11-03`);
-  set.add(`${year}-11-23`);
-  const nthMonday = (m, n) => {
-    const first = new Date(year, m - 1, 1);
-    const day = first.getDay();
-    const d = 1 + (n - 1) * 7 + (8 - day) % 7;
-    return `${year}-${pad(m)}-${pad(d)}`;
-  };
-  set.add(nthMonday(1, 2));
-  set.add(nthMonday(7, 3));
-  set.add(nthMonday(9, 3));
-  set.add(nthMonday(10, 2));
-  const vernal = year <= 2099 ? Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 20;
-  const autumnal = year <= 2099 ? Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 23;
-  set.add(`${year}-03-${pad(vernal)}`);
-  set.add(`${year}-09-${pad(autumnal)}`);
-  return set;
-}
 
 const CALENDAR_ROWS = 6;
 const CALENDAR_CELLS = 7 * CALENDAR_ROWS;
@@ -82,11 +53,7 @@ export default function LeaveInputScreen({ onBack }) {
   const holidays = getHolidays(currentMonth.getFullYear());
 
   useEffect(() => {
-    const saved = localStorage.getItem('leaveData');
-    if (saved) {
-      const data = JSON.parse(saved);
-      setLeaveData(data.leaveData || {});
-    }
+    setLeaveData(getLeaveData());
   }, []);
 
   const handleDateMouseDown = (date) => {
@@ -176,7 +143,7 @@ export default function LeaveInputScreen({ onBack }) {
   }, []);
   useEffect(() => {
     if (!leaveDataLoaded.current) return;
-    localStorage.setItem('leaveData', JSON.stringify({ leaveData }));
+    persistLeaveData(leaveData);
   }, [leaveData]);
 
   const changeMonth = (offset) => {

@@ -19,7 +19,7 @@ function getSimplifiedInfo(mod) {
 }
 
 export default function ModalityDB({ onBack }) {
-  const { modalityData, setModalityData } = useData();
+  const { modalityData, setModalityData, exportModalityCSV } = useData();
   const [expandedId, setExpandedId] = useState(null);
   const [dragFromIndex, setDragFromIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
@@ -124,6 +124,9 @@ export default function ModalityDB({ onBack }) {
         <div className="flex justify-between items-center mb-4 shrink-0">
           <h2 className="text-3xl font-bold text-stone-800">モダリティ情報入力</h2>
           <div className="flex items-center gap-2">
+            <button type="button" onClick={exportModalityCSV} className="btn-panel bg-white border-2 border-slate-600 text-stone-800">
+              📄 CSV出力
+            </button>
             <button onClick={addModality} className="btn-add">
               ➕ 新規追加
             </button>

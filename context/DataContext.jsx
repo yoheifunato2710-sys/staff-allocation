@@ -1,47 +1,43 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import {
+  getModalityData,
+  setModalityData as persistModalityData,
+  getStaffData,
+  setStaffData as persistStaffData,
+} from '../utils/storage';
 import { exportModalityCSV as doExportModalityCSV, exportStaffCSV as doExportStaffCSV } from '../utils/csv';
+import {
+  downloadFullBackup,
+  downloadStaffModalityBackup,
+  restoreFromBackupFile,
+  resetAllPersistedData,
+} from '../utils/backup';
 
 const DataContext = createContext(null);
 
 export function DataProvider({ children }) {
-  const [modalityData, setModalityData] = useState([]);
-  const [staffData, setStaffData] = useState([]);
+  const [modalityData, setModalityDataState] = useState([]);
+  const [staffData, setStaffDataState] = useState([]);
   const modalityLoaded = useRef(false);
   const staffLoaded = useRef(false);
 
-  const loadModalityData = () => {
-    try {
-      const saved = localStorage.getItem('modalityData');
-      const parsed = saved ? JSON.parse(saved) : null;
-      setModalityData(Array.isArray(parsed) ? parsed : []);
-    } catch (_) {
-      setModalityData([]);
-    }
-  };
-
-  const loadStaffData = () => {
-    try {
-      const saved = localStorage.getItem('staffData');
-      const parsed = saved ? JSON.parse(saved) : null;
-      setStaffData(Array.isArray(parsed) ? parsed : []);
-    } catch (_) {
-      setStaffData([]);
-    }
-  };
-
-  useEffect(() => {
-    loadModalityData();
-    loadStaffData();
+  const reloadFromStorage = useCallback(() => {
+    setModalityDataState(getModalityData());
+    setStaffDataState(getStaffData());
   }, []);
 
   useEffect(() => {
+    reloadFromStorage();
+  }, [reloadFromStorage]);
+
+  useEffect(() => {
     if (!modalityLoaded.current) return;
-    localStorage.setItem('modalityData', JSON.stringify(modalityData));
+    persistModalityData(modalityData);
   }, [modalityData]);
 
   useEffect(() => {
     if (!staffLoaded.current) return;
-    localStorage.setItem('staffData', JSON.stringify(staffData));
+    persistStaffData(staffData);
   }, [staffData]);
 
   useEffect(() => {
@@ -54,20 +50,31 @@ export function DataProvider({ children }) {
     return () => clearTimeout(t);
   }, []);
 
-  const saveModalityData = () => {
-    localStorage.setItem('modalityData', JSON.stringify(modalityData));
+  const setModalityData = (updater) => {
+    setModalityDataState((prev) => (typeof updater === 'function' ? updater(prev) : updater));
   };
 
-  const saveStaffData = () => {
-    localStorage.setItem('staffData', JSON.stringify(staffData));
+  const setStaffData = (updater) => {
+    setStaffDataState((prev) => (typeof updater === 'function' ? updater(prev) : updater));
   };
 
-  const exportModalityCSV = () => {
-    doExportModalityCSV(modalityData);
+  const saveModalityData = () => persistModalityData(modalityData);
+  const saveStaffData = () => persistStaffData(staffData);
+
+  const exportModalityCSV = () => doExportModalityCSV(modalityData);
+  const exportStaffCSV = () => doExportStaffCSV(modalityData, staffData);
+
+  const backupAll = () => downloadFullBackup();
+  const backupStaffModality = () => downloadStaffModalityBackup();
+
+  const restoreBackup = async (file) => {
+    await restoreFromBackupFile(file);
+    window.location.reload();
   };
 
-  const exportStaffCSV = () => {
-    doExportStaffCSV(modalityData, staffData);
+  const resetAllData = () => {
+    resetAllPersistedData();
+    window.location.reload();
   };
 
   const value = {
@@ -75,12 +82,15 @@ export function DataProvider({ children }) {
     setModalityData,
     staffData,
     setStaffData,
-    loadModalityData,
-    loadStaffData,
+    reloadFromStorage,
     saveModalityData,
     saveStaffData,
     exportModalityCSV,
-    exportStaffCSV
+    exportStaffCSV,
+    backupAll,
+    backupStaffModality,
+    restoreBackup,
+    resetAllData,
   };
 
   return (

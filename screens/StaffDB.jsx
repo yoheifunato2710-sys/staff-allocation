@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '../context/DataContext';
 
 export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editingStaff, setEditingStaff }) {
-  const { modalityData, staffData, setStaffData } = useData();
+  const { modalityData, staffData, setStaffData, exportStaffCSV } = useData();
   const [formData, setFormData] = useState({ id: '', name: '', years: '', position: '', scores: {}, isPartTime: false, partTimeSlot: 'am_pm' });
   const [dragFromIndex, setDragFromIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
@@ -134,6 +134,9 @@ export default function StaffDB({ onBack, showStaffForm, setShowStaffForm, editi
         <div className="flex justify-between items-center mb-2 shrink-0">
           <h2 className="text-3xl font-bold text-stone-800">職員情報登録</h2>
           <div className="flex items-center gap-2">
+            <button type="button" onClick={exportStaffCSV} className="btn-panel bg-white border-2 border-slate-600 text-stone-800">
+              📄 CSV出力
+            </button>
             <button onClick={openNewForm} className="btn-add">
               ➕ 新規追加
             </button>

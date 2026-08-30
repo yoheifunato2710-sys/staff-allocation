@@ -7,7 +7,6 @@ import RulesScreen from './screens/RulesScreen';
 import ShiftScheduleScreen from './screens/ShiftScheduleScreen';
 import LeaveInputScreen from './screens/LeaveInputScreen';
 import AllocationScreen from './screens/AllocationScreen';
-import PlaceholderScreen from './screens/PlaceholderScreen';
 
 const NAV_GUARD_MS = 1200; // 遷移直後の誤タップで戻らないようガード（Edge 対策で 1.2 秒）
 
@@ -93,8 +92,6 @@ function AppContent() {
         return <LeaveInputScreen onBack={onBack} />;
       case 'allocation':
         return <AllocationScreen onBack={onBack} />;
-      case 'data-manage':
-        return <PlaceholderScreen title="データ保存・読込" onBack={onBack} />;
       default:
         return <MainMenu onNavigate={onNavigate} />;
     }

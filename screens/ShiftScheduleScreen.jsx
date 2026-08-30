@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, Component } from 'react';
 import { useData } from '../context/DataContext';
 import { runAllocationForCalendar, AllocationTableView } from './AllocationScreen';
+import { getHolidays } from '../utils/holidays';
+import { normalizeWeeklyOff, getWeeklyOffIds } from '../utils/weeklyOff';
+import { getAllocationData, setAllocationData, getScheduleData, setScheduleData, getLeaveData } from '../utils/storage';
 
 const MAX_UNDO = 50;
 
@@ -31,28 +34,6 @@ function useSafeCalendar(calendar) {
   );
 }
 const NAV_GUARD_MS = 1200; // 表示直後の誤タップで戻るのを防ぐ（Edge 対策で App と揃えて 1.2 秒）
-
-/** 週休を「その日の職員IDリスト」に正規化。{ am, pm } はマージせず保持（右・左を同時に扱わない） */
-function normalizeWeeklyOff(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const result = {};
-  for (const [dateStr, value] of Object.entries(raw)) {
-    if (Array.isArray(value)) {
-      result[dateStr] = value;
-    } else if (value && typeof value === 'object' && !Array.isArray(value) && (value.am || value.pm)) {
-      result[dateStr] = { am: value.am ? [...value.am] : [], pm: value.pm ? [...value.pm] : [] };
-    }
-  }
-  return result;
-}
-
-/** その日の週休IDリスト（表示・判定用）。array ならそのまま、{ am, pm } ならマージして返す */
-function getWeeklyOffIds(weeklyOff, dateStr) {
-  const raw = weeklyOff?.[dateStr];
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  return [...new Set([...(raw.am || []), ...(raw.pm || [])])];
-}
 
 /**
  * 週休のルール（1箇所で定義）
@@ -105,39 +86,6 @@ function calcWeeklyOffDaysForStaff(staffId, calendar, schedule, surgeryDays) {
   return days;
 }
 
-/** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
-function getHolidays(year) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const set = new Set();
-  set.add(`${year}-01-01`); // 元日
-  set.add(`${year}-02-11`); // 建国記念の日
-  set.add(`${year}-02-23`); // 天皇誕生日
-  set.add(`${year}-04-29`); // 昭和の日
-  set.add(`${year}-05-03`); // 憲法記念日
-  set.add(`${year}-05-04`); // みどりの日
-  set.add(`${year}-05-05`); // こどもの日
-  set.add(`${year}-08-11`); // 山の日
-  set.add(`${year}-11-03`); // 文化の日
-  set.add(`${year}-11-23`); // 勤労感謝の日
-  // 海の日: 2020年以降は7月22日固定、それ以前は7月第3月曜
-  if (year >= 2020) set.add(`${year}-07-22`);
-  const nthMonday = (m, n) => {
-    const first = new Date(year, m - 1, 1);
-    const day = first.getDay();
-    const d = 1 + (n - 1) * 7 + (8 - day) % 7;
-    return `${year}-${pad(m)}-${pad(d)}`;
-  };
-  set.add(nthMonday(1, 2));  // 成人の日
-  if (year < 2020) set.add(nthMonday(7, 3)); // 海の日（2020未満は7月第3月曜）
-  set.add(nthMonday(9, 3));  // 敬老の日
-  set.add(nthMonday(10, 2)); // スポーツの日
-  const vernal = year <= 2099 ? Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 20;
-  const autumnal = year <= 2099 ? Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 23;
-  set.add(`${year}-03-${pad(vernal)}`);
-  set.add(`${year}-09-${pad(autumnal)}`);
-  return set;
-}
-
 export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   const { staffData: rawStaffData, modalityData: rawModalityData } = useData();
   const staffData = Array.isArray(rawStaffData) ? rawStaffData : [];
@@ -160,14 +108,8 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   const [allocationRunning, setAllocationRunning] = useState(false);
   /** 配置表データ（配置表作成で更新。初回は localStorage から読む） */
   const [allocation, setAllocation] = useState(() => {
-    try {
-      const raw = localStorage.getItem('allocationData');
-      if (!raw) return {};
-      const data = JSON.parse(raw);
-      return (data.allocation && typeof data.allocation === 'object') ? data.allocation : {};
-    } catch (_) {
-      return {};
-    }
+    const data = getAllocationData();
+    return (data?.allocation && typeof data.allocation === 'object') ? data.allocation : {};
   });
   const undoHistoryRef = useRef([]);
   const redoHistoryRef = useRef([]);
@@ -198,7 +140,7 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
       if (newAllocation != null) {
         const startDateVal = /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : '';
         const endDateVal = /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : '';
-        localStorage.setItem('allocationData', JSON.stringify({ allocation: newAllocation, startDate: startDateVal, endDate: endDateVal }));
+        setAllocationData({ allocation: newAllocation, startDate: startDateVal, endDate: endDateVal });
         setAllocation(newAllocation);
       }
       alert(alertMessage);
@@ -397,8 +339,7 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
       alert('⚠️ まず当番表を作成してください');
       return;
     }
-    const savedLeaveData = localStorage.getItem('leaveData');
-    const leaveData = savedLeaveData ? JSON.parse(savedLeaveData).leaveData || {} : {};
+    const leaveData = getLeaveData();
     const weekdays = calendar.filter(d => !d.isWeekend && !d.isHoliday);
     const remaining = {};
     staffData.forEach(staff => {
@@ -454,8 +395,7 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   const moveWeeklyOff = (staffId, fromDate, toDate) => {
     const day = calendar.find(d => d.date === toDate);
     if (!day || day.isWeekend || day.isHoliday) return;
-    const savedLeaveData = localStorage.getItem('leaveData');
-    const leaveData = savedLeaveData ? JSON.parse(savedLeaveData).leaveData || {} : {};
+    const leaveData = getLeaveData();
     const hasOtherLeave = leaveData[toDate]?.some(leave => leave.staffId === staffId);
     const calIdx = calendar.findIndex(d => d.date === toDate);
     const eff = getEffectiveScheduleForDay(schedule, toDate, calendar, calIdx, surgeryDays);
@@ -500,8 +440,7 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
   useEffect(() => {
     if (!startDate && !endDate && calendar.length === 0) return;
     try {
-      const data = { startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff };
-      localStorage.setItem('scheduleData', JSON.stringify(data));
+      setScheduleData({ startDate, endDate, calendar, surgeryDays, internalMedicineDays, nightShiftOrder, dayShiftOrder, nightShiftStartId, dayShiftStartId, pairs, schedule, weeklyOff });
     } catch (_) {
       // 循環参照などで JSON 化に失敗しても画面は落とさない
     }
@@ -512,15 +451,14 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
     try {
       const startDateVal = /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : '';
       const endDateVal = /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : '';
-      localStorage.setItem('allocationData', JSON.stringify({ allocation, startDate: startDateVal, endDate: endDateVal }));
+      setAllocationData({ allocation, startDate: startDateVal, endDate: endDateVal });
     } catch (_) {}
   }, [allocation, startDate, endDate]);
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('scheduleData');
-      if (!saved) return;
-      const data = JSON.parse(saved);
+      const data = getScheduleData();
+      if (!data || Object.keys(data).length === 0) return;
       setStartDate(typeof data.startDate === 'string' ? data.startDate : '');
       setEndDate(typeof data.endDate === 'string' ? data.endDate : '');
       const cal = Array.isArray(data.calendar) ? data.calendar : [];
@@ -619,8 +557,8 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <button onClick={generateCalendar} className="btn-section bg-amber-500 hover:bg-amber-400 text-stone-900 border-amber-600 shadow-sm">📅 カレンダーを生成（職員も配置）</button>
                   <button onClick={() => autoAssign()} className="btn-section bg-amber-400 hover:bg-amber-300 text-stone-800 border-amber-600">当番表を再配置</button>
-                  <button type="button" onClick={() => window.history.back()} className="btn-section-nav">← 戻る</button>
-                  <button type="button" onClick={() => window.history.forward()} className="btn-section-nav">進む →</button>
+                  <button type="button" onClick={undo} disabled={undoCount === 0} className="btn-section-nav disabled:opacity-40 disabled:cursor-not-allowed">← 戻る</button>
+                  <button type="button" onClick={redo} disabled={redoCount === 0} className="btn-section-nav disabled:opacity-40 disabled:cursor-not-allowed">進む →</button>
                 </div>
                 <button type="button" onClick={() => window.print()} className="btn-section-print shrink-0">🖨️ 印刷</button>
               </div>
@@ -748,8 +686,8 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <button onClick={autoAssignWeeklyOff} className="btn-section bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-700 shadow-sm">📅 週休自動割当</button>
                   <button onClick={resetWeeklyOff} className="btn-section bg-indigo-400 hover:bg-indigo-300 text-stone-800 border-indigo-600">週休割当リセット</button>
-                  <button type="button" onClick={() => window.history.back()} className="btn-section-nav">← 戻る</button>
-                  <button type="button" onClick={() => window.history.forward()} className="btn-section-nav">進む →</button>
+                  <button type="button" onClick={undo} disabled={undoCount === 0} className="btn-section-nav disabled:opacity-40 disabled:cursor-not-allowed">← 戻る</button>
+                  <button type="button" onClick={redo} disabled={redoCount === 0} className="btn-section-nav disabled:opacity-40 disabled:cursor-not-allowed">進む →</button>
                 </div>
                 <button type="button" onClick={() => window.print()} className="btn-section-print shrink-0">🖨️ 印刷</button>
               </div>
@@ -891,8 +829,8 @@ export default function ShiftScheduleScreen({ onBack, onNavigate }) {
                     >
                       再配置
                     </button>
-                    <button type="button" onClick={() => window.history.back()} className="btn-section-nav">← 戻る</button>
-                    <button type="button" onClick={() => window.history.forward()} className="btn-section-nav">進む →</button>
+                    <button type="button" onClick={undo} disabled={undoCount === 0} className="btn-section-nav disabled:opacity-40 disabled:cursor-not-allowed">← 戻る</button>
+                    <button type="button" onClick={redo} disabled={redoCount === 0} className="btn-section-nav disabled:opacity-40 disabled:cursor-not-allowed">進む →</button>
                   </div>
                   <button type="button" onClick={() => window.print()} className="btn-section-print shrink-0">🖨️ 印刷</button>
                 </div>

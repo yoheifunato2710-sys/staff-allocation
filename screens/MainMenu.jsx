@@ -1,259 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 import MenuButton from '../components/MenuButton';
+import { useData } from '../context/DataContext';
+import { getHolidays } from '../utils/holidays';
+import { getWeeklyOffIds } from '../utils/weeklyOff';
+import {
+  getLeaveData,
+  setLeaveData as persistLeaveData,
+  getCalendarComments,
+  setCalendarComments as persistCalendarComments,
+  getMonthlyComments,
+  setMonthlyComments as persistMonthlyComments,
+  getAllocationData,
+  getScheduleData,
+  getModalityData,
+  getStaffData,
+} from '../utils/storage';
 
-const STORAGE_KEY = 'mainMenuCalendarComments';
-const STORAGE_KEY_MONTHLY = 'mainMenuMonthlyComments';
 const LEAVE_TYPES = ['週休', '年休', 'リフ休', '特別休', '出張'];
 
-function getBackupFilename() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const h = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  const sec = String(d.getSeconds()).padStart(2, '0');
-  const timeStr = `${h}${min}${sec}`;
-  try {
-    const raw = localStorage.getItem('allocationData');
-    if (raw) {
-      const data = JSON.parse(raw);
-      const dateStr = data.startDate || data.endDate;
-      if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return `backup-${dateStr}-${timeStr}.json`;
-    }
-  } catch (_) {}
-  return `backup-${y}-${m}-${day}-${timeStr}.json`;
-}
-
-function downloadBackup() {
-  try {
-    const modalityData = localStorage.getItem('modalityData');
-    const staffData = localStorage.getItem('staffData');
-    const scheduleData = localStorage.getItem('scheduleData');
-    const leaveData = localStorage.getItem('leaveData');
-    const allocationData = localStorage.getItem('allocationData');
-    const calendarComments = localStorage.getItem(STORAGE_KEY);
-    const monthlyComments = localStorage.getItem(STORAGE_KEY_MONTHLY);
-    const backup = {
-      modalityData: modalityData ? JSON.parse(modalityData) : [],
-      staffData: staffData ? JSON.parse(staffData) : [],
-      scheduleData: scheduleData ? JSON.parse(scheduleData) : null,
-      leaveData: leaveData ? JSON.parse(leaveData) : null,
-      allocationData: allocationData ? JSON.parse(allocationData) : null,
-      calendarComments: calendarComments ? JSON.parse(calendarComments) : {},
-      monthlyComments: monthlyComments ? JSON.parse(monthlyComments) : {},
-      backupAt: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = getBackupFilename();
-    a.click();
-    URL.revokeObjectURL(url);
-    alert('バックアップをダウンロードしました');
-  } catch (e) {
-    alert('バックアップの作成に失敗しました');
-  }
-}
-
-/** 職員情報とモダリティ情報だけをバックアップ（夜勤・日勤の順番・開始者も含む） */
-function downloadStaffAndModalityBackup() {
-  try {
-    const modalityData = localStorage.getItem('modalityData');
-    const staffData = localStorage.getItem('staffData');
-    const scheduleDataRaw = localStorage.getItem('scheduleData');
-    let nightShiftOrder = [];
-    let dayShiftOrder = [];
-    let nightShiftStartId = null;
-    let dayShiftStartId = null;
-    let pairs = [];
-    if (scheduleDataRaw) {
-      try {
-        const scheduleData = JSON.parse(scheduleDataRaw);
-        if (Array.isArray(scheduleData.nightShiftOrder)) nightShiftOrder = scheduleData.nightShiftOrder;
-        if (Array.isArray(scheduleData.dayShiftOrder)) dayShiftOrder = scheduleData.dayShiftOrder;
-        if (scheduleData.nightShiftStartId != null) nightShiftStartId = scheduleData.nightShiftStartId;
-        if (scheduleData.dayShiftStartId != null) dayShiftStartId = scheduleData.dayShiftStartId;
-        if (Array.isArray(scheduleData.pairs)) pairs = scheduleData.pairs;
-      } catch (_) {}
-    }
-    const backup = {
-      modalityData: modalityData ? JSON.parse(modalityData) : [],
-      staffData: staffData ? JSON.parse(staffData) : [],
-      nightShiftOrder,
-      dayShiftOrder,
-      nightShiftStartId,
-      dayShiftStartId,
-      pairs,
-      backupAt: new Date().toISOString()
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    a.download = `backup-staff-modality-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    alert('職員・モダリティのバックアップをダウンロードしました');
-  } catch (e) {
-    alert('バックアップの作成に失敗しました');
-  }
-}
-
-function restoreFromBackup(file, onDone) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      // 復元前に既存データをリセット
-      localStorage.removeItem('modalityData');
-      localStorage.removeItem('staffData');
-      localStorage.removeItem('scheduleData');
-      localStorage.removeItem('leaveData');
-      localStorage.removeItem('allocationData');
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(STORAGE_KEY_MONTHLY);
-
-      let text = reader.result;
-      if (typeof text !== 'string') text = String(text);
-      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-      const backup = JSON.parse(text);
-      if (backup.modalityData != null) localStorage.setItem('modalityData', JSON.stringify(backup.modalityData));
-      if (backup.staffData != null) localStorage.setItem('staffData', JSON.stringify(backup.staffData));
-      if (backup.scheduleData != null) {
-        const scheduleData = { ...backup.scheduleData };
-        if (scheduleData.weeklyOff) scheduleData.weeklyOff = normalizeWeeklyOff(scheduleData.weeklyOff);
-        localStorage.setItem('scheduleData', JSON.stringify(scheduleData));
-      } else if (backup.nightShiftOrder != null || backup.dayShiftOrder != null || backup.nightShiftStartId != null || backup.dayShiftStartId != null || backup.pairs != null) {
-        const existing = (() => { try { const r = localStorage.getItem('scheduleData'); return r ? JSON.parse(r) : {}; } catch (_) { return {}; } })();
-        const scheduleData = {
-          ...existing,
-          nightShiftOrder: Array.isArray(backup.nightShiftOrder) ? backup.nightShiftOrder : (existing.nightShiftOrder || []),
-          dayShiftOrder: Array.isArray(backup.dayShiftOrder) ? backup.dayShiftOrder : (existing.dayShiftOrder || []),
-          nightShiftStartId: backup.nightShiftStartId ?? existing.nightShiftStartId ?? null,
-          dayShiftStartId: backup.dayShiftStartId ?? existing.dayShiftStartId ?? null,
-          pairs: Array.isArray(backup.pairs) ? backup.pairs : (existing.pairs || [])
-        };
-        localStorage.setItem('scheduleData', JSON.stringify(scheduleData));
-      }
-      if (backup.leaveData != null) localStorage.setItem('leaveData', JSON.stringify(backup.leaveData));
-      if (backup.allocationData != null) localStorage.setItem('allocationData', JSON.stringify(backup.allocationData));
-      if (backup.calendarComments != null) localStorage.setItem(STORAGE_KEY, JSON.stringify(backup.calendarComments));
-      if (backup.monthlyComments != null) localStorage.setItem(STORAGE_KEY_MONTHLY, JSON.stringify(backup.monthlyComments));
-      onDone?.();
-      alert('復元しました。画面を再読み込みします');
-      window.location.reload();
-    } catch (e) {
-      const msg = (e && (e.message || String(e))) || '不明なエラー';
-      alert(`バックアップファイルの復元に失敗しました。\n\n${msg}`);
-    }
-  };
-  reader.onerror = () => alert('ファイルの読み込みに失敗しました');
-  reader.readAsText(file, 'UTF-8');
-}
-
-/** 週休を正規化。{ am, pm } はマージせず保持（AM/PM を同時に扱わない） */
-function normalizeWeeklyOff(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const result = {};
-  for (const [dateStr, value] of Object.entries(raw)) {
-    if (Array.isArray(value)) {
-      result[dateStr] = value;
-    } else if (value && typeof value === 'object' && !Array.isArray(value) && (value.am || value.pm)) {
-      result[dateStr] = { am: value.am ? [...value.am] : [], pm: value.pm ? [...value.pm] : [] };
-    }
-  }
-  return result;
-}
-
-/** その日の週休IDリスト。array ならそのまま、{ am, pm } ならマージ */
-function getWeeklyOffIds(weeklyOff, dateStr) {
-  const raw = weeklyOff?.[dateStr];
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  return [...new Set([...(raw.am || []), ...(raw.pm || [])])];
-}
-
-/** バックアップファイルを読み、weeklyOff を修正してダウンロード */
-function downloadFixedBackup(file) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const backup = JSON.parse(reader.result);
-      if (backup.scheduleData && backup.scheduleData.weeklyOff) {
-        backup.scheduleData.weeklyOff = normalizeWeeklyOff(backup.scheduleData.weeklyOff);
-      }
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const base = (file.name && file.name.endsWith('.json')) ? file.name.slice(0, -5) : 'backup-fixed';
-      a.href = url;
-      a.download = `${base}-fixed.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      alert('修正したバックアップをダウンロードしました');
-    } catch (e) {
-      alert('ファイルの読み込みまたは修正に失敗しました');
-    }
-  };
-  reader.onerror = () => alert('ファイルの読み込みに失敗しました');
-  reader.readAsText(file, 'UTF-8');
-}
-
-/** 全データをリセット（職員・モダリティ・当番表・休暇・配置表・コメントを削除） */
-function resetAllData() {
-  const msg = 'すべてのデータ（職員・モダリティ・当番表・休暇・配置表・カレンダーコメント）を削除してリセットします。\n元に戻せません。よろしいですか？';
-  if (!window.confirm(msg)) return;
-  try {
-    localStorage.removeItem('modalityData');
-    localStorage.removeItem('staffData');
-    localStorage.removeItem('scheduleData');
-    localStorage.removeItem('leaveData');
-    localStorage.removeItem('allocationData');
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(STORAGE_KEY_MONTHLY);
-    alert('データをリセットしました。画面を再読み込みします。');
-    window.location.reload();
-  } catch (e) {
-    alert('リセットに失敗しました');
-  }
-}
-
-/** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
-function getHolidays(year) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const set = new Set();
-  set.add(`${year}-01-01`); // 元日
-  set.add(`${year}-02-11`); // 建国記念の日
-  set.add(`${year}-02-23`); // 天皇誕生日
-  set.add(`${year}-04-29`); // 昭和の日
-  set.add(`${year}-05-03`); // 憲法記念日
-  set.add(`${year}-05-04`); // みどりの日
-  set.add(`${year}-05-05`); // こどもの日
-  set.add(`${year}-08-11`); // 山の日
-  set.add(`${year}-11-03`); // 文化の日
-  set.add(`${year}-11-23`); // 勤労感謝の日
-  const nthMonday = (m, n) => {
-    const first = new Date(year, m - 1, 1);
-    const day = first.getDay();
-    const d = 1 + (n - 1) * 7 + (8 - day) % 7;
-    return `${year}-${pad(m)}-${pad(d)}`;
-  };
-  set.add(nthMonday(1, 2));  // 成人の日（1月第2月曜）
-  set.add(nthMonday(7, 3));  // 海の日（7月第3月曜）
-  set.add(nthMonday(9, 3));  // 敬老の日（9月第3月曜）
-  set.add(nthMonday(10, 2)); // スポーツの日（10月第2月曜）
-  const vernal = year <= 2099 ? Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 20;
-  const autumnal = year <= 2099 ? Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 23;
-  set.add(`${year}-03-${pad(vernal)}`);  // 春分の日
-  set.add(`${year}-09-${pad(autumnal)}`); // 秋分の日
-  return set;
-}
-
 const CALENDAR_ROWS = 6;
-const CALENDAR_CELLS = 7 * CALENDAR_ROWS; // 42
+const CALENDAR_CELLS = 7 * CALENDAR_ROWS;
 
 function getMonthDays(year, month) {
   const first = new Date(year, month, 1);
@@ -280,6 +46,7 @@ function getMonthDays(year, month) {
 }
 
 export default function MainMenu({ onNavigate }) {
+  const { backupAll, backupStaffModality, restoreBackup, resetAllData } = useData();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -297,29 +64,17 @@ export default function MainMenu({ onNavigate }) {
   const restoreInputRef = useRef(null);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('leaveData');
-      if (raw) {
-        const data = JSON.parse(raw);
-        setLeaveData(data.leaveData || {});
-      }
-    } catch (_) {}
+    setLeaveData(getLeaveData());
   }, []);
 
   useEffect(() => {
     if (selectedDate === null) return;
-    try {
-      const raw = localStorage.getItem('leaveData');
-      if (raw) {
-        const data = JSON.parse(raw);
-        setLeaveData(data.leaveData || {});
-      }
-    } catch (_) {}
+    setLeaveData(getLeaveData());
   }, [selectedDate]);
 
   const saveLeaveData = (next) => {
     try {
-      localStorage.setItem('leaveData', JSON.stringify({ leaveData: next }));
+      persistLeaveData(next);
     } catch (_) {}
   };
 
@@ -353,16 +108,10 @@ export default function MainMenu({ onNavigate }) {
   };
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setComments(parsed);
-        commentsRef.current = parsed;
-      }
-      const savedMonthly = localStorage.getItem(STORAGE_KEY_MONTHLY);
-      if (savedMonthly) setMonthlyComments(JSON.parse(savedMonthly));
-    } catch (_) {}
+    const parsed = getCalendarComments();
+    setComments(parsed);
+    commentsRef.current = parsed;
+    setMonthlyComments(getMonthlyComments());
   }, []);
 
   useEffect(() => {
@@ -502,12 +251,7 @@ export default function MainMenu({ onNavigate }) {
     }
     if (value === undefined) value = editCommentRef.current;
     const trimmed = typeof value === 'string' ? String(value).trim() : '';
-    // 保存時は必ず localStorage から現在値を読んでマージ（state に依存しない）
-    let prev = {};
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) prev = JSON.parse(raw);
-    } catch (_) {}
+    const prev = getCalendarComments();
     const next = trimmed
       ? { ...prev, [dateToSave]: trimmed }
       : (() => {
@@ -516,7 +260,7 @@ export default function MainMenu({ onNavigate }) {
           return n;
         })();
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      persistCalendarComments(next);
     } catch (_) {}
     setComments(next);
     setSelectedDate(null);
@@ -530,7 +274,7 @@ export default function MainMenu({ onNavigate }) {
   const saveMonthlyComment = (value) => {
     const next = { ...monthlyComments, [monthKey]: value };
     setMonthlyComments(next);
-    localStorage.setItem(STORAGE_KEY_MONTHLY, JSON.stringify(next));
+    persistMonthlyComments(next);
   };
 
   const changeMonth = (delta) => {
@@ -569,9 +313,16 @@ export default function MainMenu({ onNavigate }) {
                 type="file"
                 accept=".json"
                 className="hidden"
-                onChange={(e) => {
+                onChange={async (e) => {
                   const f = e.target.files?.[0];
-                  if (f) restoreFromBackup(f);
+                  if (f) {
+                    try {
+                      await restoreBackup(f);
+                    } catch (err) {
+                      const msg = (err && (err.message || String(err))) || '不明なエラー';
+                      alert(`バックアップファイルの復元に失敗しました。\n\n${msg}`);
+                    }
+                  }
                   e.target.value = '';
                 }}
               />
@@ -580,7 +331,7 @@ export default function MainMenu({ onNavigate }) {
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
-                    onClick={downloadBackup}
+                    onClick={() => { try { backupAll(); alert('バックアップをダウンロードしました'); } catch (_) { alert('バックアップの作成に失敗しました'); } }}
                     className="pl-3 pr-3 py-1.5 bg-amber-50 hover:bg-amber-100 border-2 border-amber-400 rounded-xl text-amber-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
                   >
                     <span className="shrink-0 text-lg">📦</span>
@@ -588,7 +339,7 @@ export default function MainMenu({ onNavigate }) {
                   </button>
                   <button
                     type="button"
-                    onClick={downloadStaffAndModalityBackup}
+                    onClick={() => { try { backupStaffModality(); alert('職員・モダリティのバックアップをダウンロードしました'); } catch (_) { alert('バックアップの作成に失敗しました'); } }}
                     className="pl-3 pr-3 py-1.5 bg-teal-50 hover:bg-teal-100 border-2 border-teal-400 rounded-xl text-teal-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
                   >
                     <span className="shrink-0 text-lg">👥</span>
@@ -604,7 +355,16 @@ export default function MainMenu({ onNavigate }) {
                   </button>
                   <button
                     type="button"
-                    onClick={resetAllData}
+                    onClick={() => {
+                      const msg = 'すべてのデータ（職員・モダリティ・当番表・休暇・配置表・カレンダーコメント）を削除してリセットします。\n元に戻せません。よろしいですか？';
+                      if (!window.confirm(msg)) return;
+                      try {
+                        resetAllData();
+                        alert('データをリセットしました。画面を再読み込みします。');
+                      } catch (_) {
+                        alert('リセットに失敗しました');
+                      }
+                    }}
                     className="pl-3 pr-3 py-1.5 bg-rose-50 hover:bg-rose-100 border-2 border-rose-400 rounded-xl text-rose-800 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
                   >
                     <span className="shrink-0 text-lg">🗑️</span>
@@ -699,30 +459,10 @@ export default function MainMenu({ onNavigate }) {
       {/* 日付クリック時モーダル（その日の配置表 + コメント） */}
       {selectedDate !== null && (() => {
         const dateStr = selectedDate;
-        const allocationData = (() => {
-          try {
-            const raw = localStorage.getItem('allocationData');
-            return raw ? JSON.parse(raw) : null;
-          } catch (_) { return null; }
-        })();
-        const scheduleData = (() => {
-          try {
-            const raw = localStorage.getItem('scheduleData');
-            return raw ? JSON.parse(raw) : null;
-          } catch (_) { return null; }
-        })();
-        const modalityData = (() => {
-          try {
-            const raw = localStorage.getItem('modalityData');
-            return raw ? JSON.parse(raw) : [];
-          } catch (_) { return []; }
-        })();
-        const staffData = (() => {
-          try {
-            const raw = localStorage.getItem('staffData');
-            return raw ? JSON.parse(raw) : [];
-          } catch (_) { return []; }
-        })();
+        const allocationData = getAllocationData();
+        const scheduleData = getScheduleData();
+        const modalityData = getModalityData();
+        const staffData = getStaffData();
         const schedule = scheduleData?.schedule || {};
         const manualOverrides = scheduleData?.manualOverrides || {};
         const weeklyOff = scheduleData?.weeklyOff || {};

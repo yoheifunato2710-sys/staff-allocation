@@ -1,6 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo, Component } from 'react';
 import { useData } from '../context/DataContext';
 import { INITIAL_MODALITY } from '../constants/initialModality';
+import {
+  getScheduleData,
+  setScheduleData,
+  getLeaveData,
+  getAllocationData,
+  setAllocationData,
+} from '../utils/storage';
+import {
+  getWeeklyOffBySlot,
+  getWeeklyOffMerged,
+  normalizeWeeklyOffForSave,
+} from '../utils/weeklyOff';
 
 /** プリセット（INITIAL_MODALITY）に含まれるIDかどうか。含まれなければ自分で作成したモダリティ */
 const INITIAL_MODALITY_IDS = new Set((INITIAL_MODALITY || []).map(m => m.id));
@@ -24,65 +36,6 @@ class TableErrorBoundary extends Component {
     }
     return this.props.children;
   }
-}
-
-/** 日本の祝日（指定年の祝日日付を YYYY-MM-DD の Set で返す） */
-function getHolidays(year) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const set = new Set();
-  set.add(`${year}-01-01`);
-  set.add(`${year}-02-11`);
-  set.add(`${year}-02-23`);
-  set.add(`${year}-04-29`);
-  set.add(`${year}-05-03`);
-  set.add(`${year}-05-04`);
-  set.add(`${year}-05-05`);
-  set.add(`${year}-08-11`);
-  set.add(`${year}-11-03`);
-  set.add(`${year}-11-23`);
-  if (year >= 2020) set.add(`${year}-07-22`);
-  const nthMonday = (m, n) => {
-    const first = new Date(year, m - 1, 1);
-    const day = first.getDay();
-    const d = 1 + (n - 1) * 7 + (8 - day) % 7;
-    return `${year}-${pad(m)}-${pad(d)}`;
-  };
-  set.add(nthMonday(1, 2));
-  if (year < 2020) set.add(nthMonday(7, 3));
-  set.add(nthMonday(9, 3));
-  set.add(nthMonday(10, 2));
-  const vernal = year <= 2099 ? Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 20;
-  const autumnal = year <= 2099 ? Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : 23;
-  set.add(`${year}-03-${pad(vernal)}`);
-  set.add(`${year}-09-${pad(autumnal)}`);
-  return set;
-}
-
-/** 週休を AM/PM 別に正規化。legacy の配列の場合は両方に同じリストを返す */
-function getWeeklyOffBySlot(weeklyOff, dateStr) {
-  const raw = weeklyOff?.[dateStr];
-  if (!raw) return { am: [], pm: [] };
-  if (Array.isArray(raw)) return { am: [...raw], pm: [...raw] };
-  return {
-    am: Array.isArray(raw.am) ? raw.am : [],
-    pm: Array.isArray(raw.pm) ? raw.pm : []
-  };
-}
-
-/** その日の週休（AM+PM マージ、重複除く）— 配置ロジックの「利用不可」判定用 */
-function getWeeklyOffMerged(weeklyOff, dateStr) {
-  const { am, pm } = getWeeklyOffBySlot(weeklyOff, dateStr);
-  return [...new Set([...am, ...pm])];
-}
-
-/** 週休を保存用に正規化。{ am: [], pm: [] } 形式で返す（空の日は省略可） */
-function normalizeWeeklyOffForSave(weeklyOff) {
-  const next = {};
-  Object.keys(weeklyOff || {}).forEach(dateStr => {
-    const { am, pm } = getWeeklyOffBySlot(weeklyOff, dateStr);
-    if (am.length > 0 || pm.length > 0) next[dateStr] = { am: [...am], pm: [...pm] };
-  });
-  return next;
 }
 
 function getRequiredForModality(modality, dateStr) {
@@ -502,8 +455,8 @@ export function runAllocationForCalendar(calendar, modalityData, staffData) {
   if (weekdays.length === 0) {
     return { allocation: null, alertMessage: '⚠️ 対象期間に平日がありません。' };
   }
-  const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
-  const leaveData = JSON.parse(localStorage.getItem('leaveData') || '{}');
+  const scheduleData = getScheduleData();
+  const leaveData = { leaveData: getLeaveData() };
   const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
   const weeklyOff = scheduleData.weeklyOff || {};
   const surgeryDays = Array.isArray(scheduleData.surgeryDays) ? scheduleData.surgeryDays : [];
@@ -681,8 +634,7 @@ export function AllocationTableView({ allocation = {}, modalityData = [], staffD
   const [assignPicker, setAssignPicker] = React.useState(null);
   const leaves = (() => {
     try {
-      const raw = localStorage.getItem('leaveData');
-      return raw ? (JSON.parse(raw).leaveData || {}) : {};
+      return getLeaveData();
     } catch (_) {
       return {};
     }
@@ -1254,14 +1206,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
   /** 初回マウント時から localStorage の配置を読む（「配置表作成を試す」再マウントで表がすぐ出るように） */
   const [allocation, setAllocation] = useState(() => {
     if (typeof window === 'undefined') return {};
-    try {
-      const raw = localStorage.getItem('allocationData');
-      if (!raw) return {};
-      const data = JSON.parse(raw);
-      return (data.allocation && typeof data.allocation === 'object') ? data.allocation : {};
-    } catch (_) {
-      return {};
-    }
+    const data = getAllocationData();
+    return (data?.allocation && typeof data.allocation === 'object') ? data.allocation : {};
   });
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -1306,13 +1252,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
   const allocationLoaded = useRef(false);
   useEffect(() => {
     if (embedded) {
-      const allocationData = localStorage.getItem('allocationData');
-      if (allocationData) {
-        try {
-          const data = JSON.parse(allocationData);
-          if (data.allocation && typeof data.allocation === 'object') setAllocation(data.allocation);
-        } catch (_) {}
-      }
+      const data = getAllocationData();
+      if (data?.allocation && typeof data.allocation === 'object') setAllocation(data.allocation);
       const t = setTimeout(() => { allocationLoaded.current = true; }, 300);
       return () => clearTimeout(t);
     }
@@ -1321,31 +1262,23 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
   /** embedded 時: カレンダーが渡ってきたら保存済み配置表を再読み込みして表示を確実にする */
   useEffect(() => {
     if (!embedded || !calendarProp || calendarProp.length === 0) return;
-    const raw = localStorage.getItem('allocationData');
-    if (!raw) return;
-    try {
-      const data = JSON.parse(raw);
-      if (data.allocation && typeof data.allocation === 'object') setAllocation(data.allocation);
-    } catch (_) {}
+    const data = getAllocationData();
+    if (data?.allocation && typeof data.allocation === 'object') setAllocation(data.allocation);
   }, [embedded, calendarProp]);
 
   useEffect(() => {
     if (embedded) return;
-    const scheduleData = localStorage.getItem('scheduleData');
-    if (scheduleData) {
-      const data = JSON.parse(scheduleData);
-      setStartDate(data.startDate || '');
-      setEndDate(data.endDate || '');
-      setCalendar(data.calendar || []);
+    const scheduleData = getScheduleData();
+    if (scheduleData && Object.keys(scheduleData).length > 0) {
+      setStartDate(scheduleData.startDate || '');
+      setEndDate(scheduleData.endDate || '');
+      setCalendar(scheduleData.calendar || []);
     }
-    const allocationData = localStorage.getItem('allocationData');
+    const allocationData = getAllocationData();
     if (allocationData) {
-      try {
-        const data = JSON.parse(allocationData);
-        if (data.allocation) setAllocation(data.allocation);
-        if (data.startDate) setStartDate(data.startDate);
-        if (data.endDate) setEndDate(data.endDate);
-      } catch (_) {}
+      if (allocationData.allocation) setAllocation(allocationData.allocation);
+      if (allocationData.startDate) setStartDate(allocationData.startDate);
+      if (allocationData.endDate) setEndDate(allocationData.endDate);
     }
     const t = setTimeout(() => { allocationLoaded.current = true; }, 300);
     return () => clearTimeout(t);
@@ -1364,8 +1297,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
       alert('⚠️ 職員が登録されていません。メニューから「職員情報」で登録してください');
       return;
     }
-    const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
-    const leaveData = JSON.parse(localStorage.getItem('leaveData') || '{}');
+    const scheduleData = getScheduleData();
+    const leaveData = { leaveData: getLeaveData() };
     const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
     const weeklyOff = scheduleData.weeklyOff || {};
     const surgeryDays = Array.isArray(scheduleData.surgeryDays) ? scheduleData.surgeryDays : [];
@@ -1600,9 +1533,9 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
       }
 
       if (moved) {
-        const saved = JSON.parse(localStorage.getItem('scheduleData') || '{}');
+        const saved = getScheduleData();
         saved.weeklyOff = normalizeWeeklyOffForSave(currentWeeklyOff);
-        localStorage.setItem('scheduleData', JSON.stringify(saved));
+        setScheduleData(saved);
       }
     }
 
@@ -1726,8 +1659,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
   }
 
   const getStaffAllocation = (staffId, date) => {
-    const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
-    const leaveData = JSON.parse(localStorage.getItem('leaveData') || '{}');
+    const scheduleData = getScheduleData();
+    const leaveData = { leaveData: getLeaveData() };
     const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
     const weeklyOff = scheduleData.weeklyOff || {};
     const surgeryDays = scheduleData.surgeryDays || [];
@@ -1805,7 +1738,7 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
             const isKyukyuPm = mod?.name === '救命(日勤)';
             let bPerson = null;
             if (isKyukyuPm) {
-              const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
+              const scheduleData = getScheduleData();
               const sched = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
               const surgeryDaysArr = Array.isArray(scheduleData.surgeryDays) ? scheduleData.surgeryDays : [];
               const idx = effectiveCalendar.findIndex(d => d.date === dateStr);
@@ -1853,8 +1786,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
 
   /** その日の「未配置」に表示している職員IDリスト（当番表に載っている人は除外）。slot で AM/PM 未配置を区別 */
   const getAssignableUnassigned = (dateStr, slot) => {
-    const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
-    const leaveDataRaw = JSON.parse(localStorage.getItem('leaveData') || '{}');
+    const scheduleData = getScheduleData();
+    const leaveDataRaw = { leaveData: getLeaveData() };
     const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
     const weeklyOff = scheduleData.weeklyOff || {};
     const leaves = leaveDataRaw.leaveData || {};
@@ -1882,18 +1815,18 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
     if (!allocationLoaded.current) return;
     const savedStart = embedded ? effectiveStartDate : startDate;
     const savedEnd = embedded ? effectiveEndDate : endDate;
-    localStorage.setItem('allocationData', JSON.stringify({ allocation, startDate: savedStart, endDate: savedEnd }));
+    setAllocationData({ allocation, startDate: savedStart, endDate: savedEnd });
   }, [allocation, startDate, endDate, embedded, effectiveStartDate, effectiveEndDate]);
 
   /** 週休割り当てで週休を別日に移動。fromSlot/toSlot で AM/PM を個別に移動（リンクを切る） */
   const moveWeeklyOffAllocation = (staffId, fromDate, toDate, fromSlot, toSlot) => {
-    const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
+    const scheduleData = getScheduleData();
     const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
     const cal = scheduleData.calendar || [];
     const surgeryDays = scheduleData.surgeryDays || [];
     const day = cal.find(d => d.date === toDate);
     if (!day || day.isWeekend || day.isHoliday) return;
-    const leaveData = JSON.parse(localStorage.getItem('leaveData') || '{}').leaveData || {};
+    const leaveData = getLeaveData();
     const hasOtherLeave = leaveData[toDate]?.some(leave => leave.staffId === staffId);
     const daySchedule = schedule[toDate] || {};
     const calIdx = cal.findIndex(d => d.date === toDate);
@@ -1927,15 +1860,15 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
     const arr = next[toDate][toKey];
     if (!arr.includes(staffId)) next[toDate][toKey] = [...arr, staffId];
     scheduleData.weeklyOff = normalizeWeeklyOffForSave(next);
-    localStorage.setItem('scheduleData', JSON.stringify(scheduleData));
+    setScheduleData(scheduleData);
     setScheduleDataVersion(v => v + 1);
   };
 
   /** AM列・PM列それぞれで重複している職員のみグレー表示。B・救命の重複はグレーにしない */
   const { duplicateInAMByDate, duplicateInPMByDate, bPersonByDate } = useMemo(() => {
     try {
-      const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
-      const leaveDataRaw = JSON.parse(localStorage.getItem('leaveData') || '{}');
+      const scheduleData = getScheduleData();
+      const leaveDataRaw = { leaveData: getLeaveData() };
       if (!scheduleData || typeof scheduleData !== 'object') return { duplicateInAMByDate: {}, duplicateInPMByDate: {}, bPersonByDate: {}, hasDuplicateThatDay: {} };
       const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
       const weeklyOff = scheduleData.weeklyOff || {};
@@ -2395,8 +2328,8 @@ export default function AllocationScreen({ onBack, embedded = false, calendarPro
                     );
                   })}
                   {(() => {
-                    const scheduleData = JSON.parse(localStorage.getItem('scheduleData') || '{}');
-                    const leaveDataRaw = JSON.parse(localStorage.getItem('leaveData') || '{}');
+                    const scheduleData = getScheduleData();
+                    const leaveDataRaw = { leaveData: getLeaveData() };
                     const schedule = mergeScheduleWithOverrides(scheduleData.schedule || {}, scheduleData.manualOverrides);
                     const weeklyOff = scheduleData.weeklyOff || {};
                     const surgeryDays = scheduleData.surgeryDays || [];

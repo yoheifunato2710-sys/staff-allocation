@@ -1,6 +1,7 @@
 /**
  * localStorage のキーと読み書きを一箇所に集約。
  * データ構造の変更やバックアップはこのファイルを起点に行う。
+ * Electron 環境では変更のたび userData へも自動同期する。
  */
 
 export const STORAGE_KEYS = {
@@ -28,6 +29,10 @@ export function readJson(key, fallback) {
 
 export function writeJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+  // 循環参照回避のため動的 import
+  import('./localPersist')
+    .then((m) => m.scheduleLocalAutosave())
+    .catch(() => {});
 }
 
 export function removeKey(key) {
@@ -127,4 +132,7 @@ export function getAllPersistedData() {
 
 export function clearAllData() {
   Object.values(STORAGE_KEYS).forEach(removeKey);
+  import('./localPersist')
+    .then((m) => m.scheduleLocalAutosave())
+    .catch(() => {});
 }

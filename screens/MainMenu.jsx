@@ -15,6 +15,7 @@ import {
   getModalityData,
   getStaffData,
 } from '../utils/storage';
+import { formatSnapshotLabel } from '../utils/localPersist';
 
 const LEAVE_TYPES = ['週休', '年休', 'リフ休', '特別休', '出張'];
 
@@ -46,7 +47,15 @@ function getMonthDays(year, month) {
 }
 
 export default function MainMenu({ onNavigate }) {
-  const { backupAll, backupStaffModality, restoreBackup, resetAllData } = useData();
+  const {
+    backupAll,
+    backupStaffModality,
+    restoreBackup,
+    restoreLocalSnapshot,
+    fetchLocalSnapshots,
+    isElectronPersist,
+    resetAllData,
+  } = useData();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -58,10 +67,38 @@ export default function MainMenu({ onNavigate }) {
   const [showAddLeaveForm, setShowAddLeaveForm] = useState(false);
   const [addLeaveStaff, setAddLeaveStaff] = useState('');
   const [addLeaveType, setAddLeaveType] = useState('');
+  const [snapshots, setSnapshots] = useState([]);
+  const [showSnapshots, setShowSnapshots] = useState(false);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const editCommentRef = useRef('');
   const commentsRef = useRef({});
   const textareaRef = useRef(null);
   const restoreInputRef = useRef(null);
+
+  const openSnapshotList = async () => {
+    setShowSnapshots(true);
+    setSnapshotsLoading(true);
+    try {
+      const result = await fetchLocalSnapshots();
+      setSnapshots(result?.snapshots || []);
+    } catch (_) {
+      setSnapshots([]);
+      alert('保存一覧の取得に失敗しました');
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  };
+
+  const handleRestoreSnapshot = async (filename, label) => {
+    const display = formatSnapshotLabel(label || filename);
+    if (!window.confirm(`${display} のデータを読み込んで再開しますか？\n現在の内容は上書きされます。`)) return;
+    try {
+      await restoreLocalSnapshot(filename);
+    } catch (err) {
+      const msg = (err && (err.message || String(err))) || '不明なエラー';
+      alert(`再開に失敗しました。\n\n${msg}`);
+    }
+  };
 
   useEffect(() => {
     setLeaveData(getLeaveData());
@@ -328,7 +365,22 @@ export default function MainMenu({ onNavigate }) {
               />
               <div className="mt-1.5 pt-1.5 border-t-2 border-slate-300 shrink-0">
                 <p className="text-xs font-bold text-stone-600 uppercase tracking-wider mb-1 px-0.5">データのバックアップ</p>
+                {isElectronPersist && (
+                  <p className="text-[11px] text-stone-500 mb-1.5 px-0.5 leading-snug">
+                    変更は自動でPCに保存されます。終了時は日時付きで保存され、下から再開できます。
+                  </p>
+                )}
                 <div className="flex flex-col gap-1">
+                  {isElectronPersist && (
+                    <button
+                      type="button"
+                      onClick={openSnapshotList}
+                      className="pl-3 pr-3 py-1.5 bg-sky-50 hover:bg-sky-100 border-2 border-sky-400 rounded-xl text-sky-900 font-semibold text-base transition-all flex items-center gap-2 text-left w-full leading-tight"
+                    >
+                      <span className="shrink-0 text-lg">🕒</span>
+                      <span>保存データから再開</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => { try { backupAll(); alert('バックアップをダウンロードしました'); } catch (_) { alert('バックアップの作成に失敗しました'); } }}
@@ -649,6 +701,52 @@ export default function MainMenu({ onNavigate }) {
           </div>
         );
       })()}
+
+      {showSnapshots && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-stone-50 border-2 border-stone-300 rounded-2xl p-5 w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col shadow-xl">
+            <div className="flex justify-between items-center mb-3 shrink-0">
+              <h3 className="font-bold text-stone-800 text-lg">保存データから再開</h3>
+              <button
+                type="button"
+                onClick={() => setShowSnapshots(false)}
+                className="text-stone-400 hover:text-stone-600 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-sm text-stone-600 mb-3 shrink-0">
+              アプリ終了時に自動保存された日時一覧です。選ぶと当時の状態で再開します。
+            </p>
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5">
+              {snapshotsLoading && (
+                <p className="text-sm text-stone-500 py-4 text-center">読み込み中…</p>
+              )}
+              {!snapshotsLoading && snapshots.length === 0 && (
+                <p className="text-sm text-stone-500 py-4 text-center">まだ終了時の保存がありません</p>
+              )}
+              {!snapshotsLoading && snapshots.map((snap) => (
+                <button
+                  key={snap.filename}
+                  type="button"
+                  onClick={() => handleRestoreSnapshot(snap.filename, snap.label)}
+                  className="w-full text-left px-3 py-2.5 rounded-xl border-2 border-sky-300 bg-white hover:bg-sky-50 text-stone-800 font-medium transition-all"
+                >
+                  <span className="block text-base">{formatSnapshotLabel(snap.label)}</span>
+                  <span className="block text-xs text-stone-500 mt-0.5">{snap.filename}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSnapshots(false)}
+              className="mt-3 shrink-0 min-h-[40px] px-4 py-2 rounded-lg border-2 border-slate-400 bg-white hover:bg-slate-100 text-stone-800 font-semibold"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

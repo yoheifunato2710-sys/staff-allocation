@@ -50,6 +50,8 @@ function AppContent() {
   const lastNavigateAtRef = useRef(0);
 
   useEffect(() => {
+    // Electron では終了時に日時スナップショットを自動保存するため、ブラウザ警告は出さない
+    if (typeof window !== 'undefined' && window.electronAPI?.isElectron) return undefined;
     const handleBeforeUnload = (e) => {
       e.preventDefault();
       e.returnValue = 'バックアップを取得しましたか？データが失われる可能性があります。';

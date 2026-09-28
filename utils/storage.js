@@ -3,6 +3,7 @@
  * データ構造の変更やバックアップはこのファイルを起点に行う。
  * Electron 環境では変更のたび userData へも自動同期する。
  */
+import { scheduleLocalAutosave } from './localPersist';
 
 export const STORAGE_KEYS = {
   MODALITY: 'modalityData',
@@ -16,105 +17,63 @@ export const STORAGE_KEYS = {
 
 export const SCHEMA_VERSION = 1;
 
-/** @template T */
-export function readJson(key, fallback) {
+/** 最後にデータを変更した日時（ISO）。起動時にどの保存が最新かを比べるのに使う */
+const UPDATED_AT_KEY = 'dataUpdatedAt';
+export const getDataUpdatedAt = () => localStorage.getItem(UPDATED_AT_KEY);
+export const setDataUpdatedAt = (iso) => localStorage.setItem(UPDATED_AT_KEY, iso);
+
+function readJson(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
-    if (raw == null) return fallback;
-    return JSON.parse(raw);
+    return raw == null ? fallback : JSON.parse(raw);
   } catch (_) {
     return fallback;
   }
 }
 
-export function writeJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-  // 循環参照回避のため動的 import
-  import('./localPersist')
-    .then((m) => m.scheduleLocalAutosave())
-    .catch(() => {});
+function writeJson(key, value) {
+  const json = JSON.stringify(value);
+  if (localStorage.getItem(key) === json) return;
+  localStorage.setItem(key, json);
+  setDataUpdatedAt(new Date().toISOString());
+  scheduleLocalAutosave();
 }
 
-export function removeKey(key) {
-  localStorage.removeItem(key);
+const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+function readArray(key) {
+  const v = readJson(key, []);
+  return Array.isArray(v) ? v : [];
 }
 
-// --- 職員・モダリティ ---
-
-export function getModalityData() {
-  const parsed = readJson(STORAGE_KEYS.MODALITY, []);
-  return Array.isArray(parsed) ? parsed : [];
+function readObject(key) {
+  const v = readJson(key, {});
+  return isPlainObject(v) ? v : {};
 }
 
-export function setModalityData(data) {
-  writeJson(STORAGE_KEYS.MODALITY, data);
-}
+export const getModalityData = () => readArray(STORAGE_KEYS.MODALITY);
+export const setModalityData = (data) => writeJson(STORAGE_KEYS.MODALITY, data);
 
-export function getStaffData() {
-  const parsed = readJson(STORAGE_KEYS.STAFF, []);
-  return Array.isArray(parsed) ? parsed : [];
-}
+export const getStaffData = () => readArray(STORAGE_KEYS.STAFF);
+export const setStaffData = (data) => writeJson(STORAGE_KEYS.STAFF, data);
 
-export function setStaffData(data) {
-  writeJson(STORAGE_KEYS.STAFF, data);
-}
-
-// --- 当番表 ---
-
-export function getScheduleData() {
-  return readJson(STORAGE_KEYS.SCHEDULE, {}) || {};
-}
-
-export function setScheduleData(data) {
-  writeJson(STORAGE_KEYS.SCHEDULE, data);
-}
-
-export function patchScheduleData(patch) {
-  setScheduleData({ ...getScheduleData(), ...patch });
-}
-
-// --- 休暇 ---
+export const getScheduleData = () => readObject(STORAGE_KEYS.SCHEDULE);
+export const setScheduleData = (data) => writeJson(STORAGE_KEYS.SCHEDULE, data);
 
 export function getLeaveData() {
-  const parsed = readJson(STORAGE_KEYS.LEAVE, {});
-  return parsed?.leaveData && typeof parsed.leaveData === 'object' ? parsed.leaveData : {};
+  const leaveData = readJson(STORAGE_KEYS.LEAVE, {})?.leaveData;
+  return leaveData && typeof leaveData === 'object' ? leaveData : {};
 }
+export const setLeaveData = (leaveData) => writeJson(STORAGE_KEYS.LEAVE, { leaveData });
 
-export function setLeaveData(leaveData) {
-  writeJson(STORAGE_KEYS.LEAVE, { leaveData });
-}
+export const getAllocationData = () => readJson(STORAGE_KEYS.ALLOCATION, null);
+export const setAllocationData = (data) => writeJson(STORAGE_KEYS.ALLOCATION, data);
 
-// --- 配置表 ---
+export const getCalendarComments = () => readObject(STORAGE_KEYS.CALENDAR_COMMENTS);
+export const setCalendarComments = (comments) => writeJson(STORAGE_KEYS.CALENDAR_COMMENTS, comments);
 
-export function getAllocationData() {
-  return readJson(STORAGE_KEYS.ALLOCATION, null);
-}
-
-export function setAllocationData(data) {
-  writeJson(STORAGE_KEYS.ALLOCATION, data);
-}
-
-// --- カレンダーコメント ---
-
-export function getCalendarComments() {
-  const parsed = readJson(STORAGE_KEYS.CALENDAR_COMMENTS, {});
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-}
-
-export function setCalendarComments(comments) {
-  writeJson(STORAGE_KEYS.CALENDAR_COMMENTS, comments);
-}
-
-export function getMonthlyComments() {
-  const parsed = readJson(STORAGE_KEYS.MONTHLY_COMMENTS, {});
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-}
-
-export function setMonthlyComments(comments) {
-  writeJson(STORAGE_KEYS.MONTHLY_COMMENTS, comments);
-}
-
-// --- 一括操作 ---
+export const getMonthlyComments = () => readObject(STORAGE_KEYS.MONTHLY_COMMENTS);
+export const setMonthlyComments = (comments) => writeJson(STORAGE_KEYS.MONTHLY_COMMENTS, comments);
 
 export function getAllPersistedData() {
   return {
@@ -126,13 +85,13 @@ export function getAllPersistedData() {
     allocationData: getAllocationData(),
     calendarComments: getCalendarComments(),
     monthlyComments: getMonthlyComments(),
+    updatedAt: getDataUpdatedAt(),
     backupAt: new Date().toISOString(),
   };
 }
 
 export function clearAllData() {
-  Object.values(STORAGE_KEYS).forEach(removeKey);
-  import('./localPersist')
-    .then((m) => m.scheduleLocalAutosave())
-    .catch(() => {});
+  Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
+  setDataUpdatedAt(new Date().toISOString());
+  scheduleLocalAutosave();
 }

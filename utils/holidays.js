@@ -2,52 +2,26 @@
  * 日本の祝日（YYYY-MM-DD の Set）
  * 海の日: 2020年以降は7月22日固定、それ以前は7月第3月曜
  */
+import { pad } from './date';
 
-function pad(n) {
-  return String(n).padStart(2, '0');
-}
+const FIXED_HOLIDAYS = ['01-01', '02-11', '02-23', '04-29', '05-03', '05-04', '05-05', '08-11', '11-03', '11-23'];
 
 function nthMonday(year, month, n) {
-  const first = new Date(year, month - 1, 1);
-  const day = first.getDay();
-  const d = 1 + (n - 1) * 7 + (8 - day) % 7;
-  return `${year}-${pad(month)}-${pad(d)}`;
+  const firstDow = new Date(year, month - 1, 1).getDay();
+  return `${year}-${pad(month)}-${pad(1 + (n - 1) * 7 + ((8 - firstDow) % 7))}`;
+}
+
+function equinoxDay(base, year) {
+  return year <= 2099 ? Math.floor(base + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)) : Math.floor(base);
 }
 
 export function getHolidays(year) {
-  const set = new Set();
-  set.add(`${year}-01-01`);
-  set.add(`${year}-02-11`);
-  set.add(`${year}-02-23`);
-  set.add(`${year}-04-29`);
-  set.add(`${year}-05-03`);
-  set.add(`${year}-05-04`);
-  set.add(`${year}-05-05`);
-  set.add(`${year}-08-11`);
-  set.add(`${year}-11-03`);
-  set.add(`${year}-11-23`);
-
-  if (year >= 2020) {
-    set.add(`${year}-07-22`);
-  }
-
+  const set = new Set(FIXED_HOLIDAYS.map((md) => `${year}-${md}`));
+  set.add(year >= 2020 ? `${year}-07-22` : nthMonday(year, 7, 3));
   set.add(nthMonday(year, 1, 2));
-  if (year < 2020) set.add(nthMonday(year, 7, 3));
   set.add(nthMonday(year, 9, 3));
   set.add(nthMonday(year, 10, 2));
-
-  const vernal = year <= 2099
-    ? Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4))
-    : 20;
-  const autumnal = year <= 2099
-    ? Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4))
-    : 23;
-  set.add(`${year}-03-${pad(vernal)}`);
-  set.add(`${year}-09-${pad(autumnal)}`);
-
+  set.add(`${year}-03-${pad(equinoxDay(20.8431, year))}`);
+  set.add(`${year}-09-${pad(equinoxDay(23.2488, year))}`);
   return set;
-}
-
-export function isHoliday(dateStr, year) {
-  return getHolidays(year).has(dateStr);
 }

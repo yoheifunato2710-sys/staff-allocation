@@ -1,138 +1,126 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-const isDev = !app.isPackaged;
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+const EXIT_FALLBACK_MS = 5000;
+const SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/;
 
-const AUTOSAVE_FILENAME = 'autosave.json';
-const SNAPSHOTS_DIRNAME = 'snapshots';
+const dataRoot = () => path.join(app.getPath('userData'), 'data');
+const autosavePath = () => path.join(dataRoot(), 'autosave.json');
+const settingsPath = () => path.join(dataRoot(), 'settings.json');
+const legacySnapshotsDir = () => path.join(dataRoot(), 'snapshots');
+const defaultBackupDir = () => path.join(app.getPath('documents'), '人員配置管理バックアップ');
 
-function getDataRoot() {
-  return path.join(app.getPath('userData'), 'data');
-}
-
-function getAutosavePath() {
-  return path.join(getDataRoot(), AUTOSAVE_FILENAME);
-}
-
-function getSnapshotsDir() {
-  return path.join(getDataRoot(), SNAPSHOTS_DIRNAME);
-}
-
-function ensureDataDirs() {
-  fs.mkdirSync(getDataRoot(), { recursive: true });
-  fs.mkdirSync(getSnapshotsDir(), { recursive: true });
-}
-
-function pad(n) {
-  return String(n).padStart(2, '0');
-}
+const pad = (n) => String(n).padStart(2, '0');
 
 /** Windows でも使える日時ファイル名: 2026-09-11_16-59-00.json */
-function makeSnapshotFilename(date = new Date()) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}.json`;
+function makeSnapshotFilename(d = new Date()) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}.json`;
 }
 
 function writeJsonFile(filePath, data) {
-  ensureDataDirs();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
   fs.renameSync(tmp, filePath);
 }
 
 function readJsonFile(filePath) {
-  if (!fs.existsSync(filePath)) return null;
-  const text = fs.readFileSync(filePath, 'utf8');
-  return JSON.parse(text);
+  return fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '')) : null;
+}
+
+function readSettings() {
+  try {
+    return readJsonFile(settingsPath()) || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+const getBackupDir = () => readSettings().backupDir || defaultBackupDir();
+
+/** 日時名のスナップショットを新しい順に（バックアップ先 → 旧保存先の順で同名は前者を優先） */
+function listSnapshotFiles() {
+  const seen = new Set();
+  return [getBackupDir(), legacySnapshotsDir()]
+    .flatMap((dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => SNAPSHOT_NAME.test(n)).map((n) => ({ dir, filename: n })) : []))
+    .filter(({ filename }) => !seen.has(filename) && seen.add(filename))
+    .sort((a, b) => b.filename.localeCompare(a.filename));
+}
+
+function saveSnapshot(data) {
+  const filename = makeSnapshotFilename();
+  const filePath = path.join(getBackupDir(), filename);
+  writeJsonFile(filePath, {
+    ...data,
+    backupAt: data?.backupAt || new Date().toISOString(),
+    snapshotLabel: path.basename(filename, '.json'),
+  });
+  return { path: filePath, filename };
+}
+
+/** 例外は { ok: false, error, ...fallback } に変換して返す */
+function handle(channel, fn, fallback = {}) {
+  ipcMain.handle(channel, (_event, ...args) => {
+    try {
+      return { ok: true, ...fn(...args) };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err), ...fallback };
+    }
+  });
 }
 
 function registerIpc() {
-  ipcMain.handle('persist:writeAutosave', (_event, data) => {
-    try {
-      writeJsonFile(getAutosavePath(), data);
-      return { ok: true, path: getAutosavePath() };
-    } catch (err) {
-      return { ok: false, error: err?.message || String(err) };
-    }
+  handle('persist:writeAutosave', (data) => {
+    writeJsonFile(autosavePath(), data);
+    return { path: autosavePath() };
   });
 
-  ipcMain.handle('persist:readAutosave', () => {
-    try {
-      const data = readJsonFile(getAutosavePath());
-      return { ok: true, data };
-    } catch (err) {
-      return { ok: false, error: err?.message || String(err), data: null };
-    }
-  });
+  handle('persist:readAutosave', () => ({ data: readJsonFile(autosavePath()) }), { data: null });
 
-  ipcMain.handle('persist:saveSnapshot', (_event, data, label) => {
-    try {
-      ensureDataDirs();
-      const filename = label && typeof label === 'string'
-        ? (label.endsWith('.json') ? label : `${label}.json`)
-        : makeSnapshotFilename();
-      const filePath = path.join(getSnapshotsDir(), path.basename(filename));
-      const payload = {
-        ...data,
-        backupAt: data?.backupAt || new Date().toISOString(),
-        snapshotLabel: path.basename(filePath, '.json'),
-      };
-      writeJsonFile(filePath, payload);
-      return { ok: true, path: filePath, filename: path.basename(filePath) };
-    } catch (err) {
-      return { ok: false, error: err?.message || String(err) };
-    }
-  });
+  handle('persist:saveSnapshot', saveSnapshot);
 
-  ipcMain.handle('persist:listSnapshots', () => {
-    try {
-      ensureDataDirs();
-      const dir = getSnapshotsDir();
-      const files = fs.readdirSync(dir)
-        .filter((name) => name.endsWith('.json'))
-        .map((name) => {
-          const full = path.join(dir, name);
-          const stat = fs.statSync(full);
-          return {
-            filename: name,
-            label: name.replace(/\.json$/i, ''),
-            mtimeMs: stat.mtimeMs,
-            size: stat.size,
-          };
-        })
-        .sort((a, b) => b.mtimeMs - a.mtimeMs);
-      return { ok: true, snapshots: files, dir };
-    } catch (err) {
-      return { ok: false, error: err?.message || String(err), snapshots: [] };
-    }
-  });
+  handle('persist:listSnapshots', () => ({
+    snapshots: listSnapshotFiles().map(({ filename }) => ({ filename, label: filename.replace(/\.json$/i, '') })),
+    dir: getBackupDir(),
+  }), { snapshots: [] });
 
-  ipcMain.handle('persist:readSnapshot', (_event, filename) => {
-    try {
-      const safeName = path.basename(String(filename || ''));
-      if (!safeName.endsWith('.json')) {
-        return { ok: false, error: '不正なファイル名です', data: null };
-      }
-      const filePath = path.join(getSnapshotsDir(), safeName);
-      if (!fs.existsSync(filePath)) {
-        return { ok: false, error: 'ファイルが見つかりません', data: null };
-      }
-      const data = readJsonFile(filePath);
-      return { ok: true, data, path: filePath };
-    } catch (err) {
-      return { ok: false, error: err?.message || String(err), data: null };
-    }
-  });
+  handle('persist:readSnapshot', (filename) => {
+    const safeName = path.basename(String(filename || ''));
+    const entry = listSnapshotFiles().find((f) => f.filename === safeName);
+    if (!entry) throw new Error('ファイルが見つかりません');
+    const filePath = path.join(entry.dir, safeName);
+    return { data: readJsonFile(filePath), path: filePath };
+  }, { data: null });
 
-  ipcMain.handle('persist:getPaths', () => {
-    ensureDataDirs();
-    return {
-      ok: true,
-      dataRoot: getDataRoot(),
-      autosavePath: getAutosavePath(),
-      snapshotsDir: getSnapshotsDir(),
-    };
+  /** 最新のスナップショット（壊れたファイルは飛ばす） */
+  handle('persist:readLatestSnapshot', () => {
+    for (const { dir, filename } of listSnapshotFiles()) {
+      try {
+        const data = readJsonFile(path.join(dir, filename));
+        if (data && typeof data === 'object') return { data, filename };
+      } catch (_) { /* 次のファイルへ */ }
+    }
+    return { data: null };
+  }, { data: null });
+
+  handle('persist:getBackupDir', () => ({ dir: getBackupDir() }));
+
+  ipcMain.handle('persist:chooseBackupDir', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(win, {
+      title: 'バックアップの保存先フォルダを選択',
+      defaultPath: getBackupDir(),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true, dir: getBackupDir() };
+    try {
+      writeJsonFile(settingsPath(), { ...readSettings(), backupDir: result.filePaths[0] });
+      return { ok: true, dir: result.filePaths[0] };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err), dir: getBackupDir() };
+    }
   });
 }
 
@@ -151,43 +139,43 @@ function createWindow() {
     },
   });
 
+  // 閉じる前にレンダラーへ最新データのバックアップを依頼する。
+  // 失敗・無応答（5 秒）のときは直近の autosave をバックアップ先へ書き出してから閉じる
   let allowClose = false;
   let exitInProgress = false;
-
   mainWindow.on('close', (e) => {
     if (allowClose) return;
     e.preventDefault();
     if (exitInProgress) return;
     exitInProgress = true;
-    mainWindow.webContents.send('persist:prepare-exit');
-
-    // レンダラー無応答時のフォールバック（最大 5 秒）
-    const fallback = setTimeout(() => {
-      allowClose = true;
-      if (!mainWindow.isDestroyed()) mainWindow.close();
-    }, 5000);
-
-    const onExitDone = () => {
+    const onDone = (_event, saved) => finish(saved === true);
+    const finish = (saved) => {
       clearTimeout(fallback);
-      ipcMain.removeListener('persist:exit-done', onExitDone);
+      ipcMain.removeListener('persist:exit-done', onDone);
+      if (!saved) {
+        try {
+          const data = readJsonFile(autosavePath());
+          if (data) saveSnapshot(data);
+        } catch (err) {
+          console.error('Exit backup failed:', err);
+        }
+      }
       allowClose = true;
       if (!mainWindow.isDestroyed()) mainWindow.close();
     };
-    ipcMain.once('persist:exit-done', onExitDone);
+    const fallback = setTimeout(() => finish(false), EXIT_FALLBACK_MS);
+    ipcMain.once('persist:exit-done', onDone);
+    mainWindow.webContents.send('persist:prepare-exit');
   });
 
-  if (isDev) {
-    mainWindow.loadURL(DEV_SERVER_URL);
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-  }
+  if (app.isPackaged) mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  else mainWindow.loadURL(DEV_SERVER_URL);
 }
 
 app.whenReady().then(() => {
-  ensureDataDirs();
+  fs.mkdirSync(dataRoot(), { recursive: true });
   registerIpc();
   createWindow();
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

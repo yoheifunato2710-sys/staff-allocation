@@ -13,149 +13,66 @@ import {
   setMonthlyComments,
   setScheduleData,
   setStaffData,
-  readJson,
-  writeJson,
-  STORAGE_KEYS,
 } from './storage';
 import { normalizeWeeklyOff } from './weeklyOff';
+import { downloadFile } from './download';
+import { isDateStr, timestamp } from './date';
 
-function pad(n) {
-  return String(n).padStart(2, '0');
-}
+const ORDER_KEYS = ['nightShiftOrder', 'dayShiftOrder', 'pairs'];
+const START_ID_KEYS = ['nightShiftStartId', 'dayShiftStartId'];
 
-function downloadJson(data, filename) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+const downloadJson = (data, filename) => downloadFile(JSON.stringify(data, null, 2), filename, 'application/json');
+const asArray = (v) => (Array.isArray(v) ? v : []);
 
-export function getBackupFilename() {
-  const d = new Date();
-  const timeStr = `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+/** 全データを JSON ファイルでダウンロード（配置表の開始日があればファイル名に使う） */
+export function downloadFullBackup() {
+  const now = timestamp();
   const allocation = getAllocationData();
   const dateStr = allocation?.startDate || allocation?.endDate;
-  if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return `backup-${dateStr}-${timeStr}.json`;
-  }
-  return `backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${timeStr}.json`;
-}
-
-/** 全データを JSON ファイルでダウンロード */
-export function downloadFullBackup() {
-  downloadJson(getAllPersistedData(), getBackupFilename());
+  const name = isDateStr(dateStr) ? `${dateStr}-${now.slice(-6)}` : now;
+  downloadJson(getAllPersistedData(), `backup-${name}.json`);
 }
 
 /** 職員・モダリティと当番順序のみバックアップ */
 export function downloadStaffModalityBackup() {
-  const scheduleData = getScheduleData();
-  const backup = {
-    schemaVersion: SCHEMA_VERSION,
-    modalityData: getModalityData(),
-    staffData: getStaffData(),
-    nightShiftOrder: Array.isArray(scheduleData.nightShiftOrder) ? scheduleData.nightShiftOrder : [],
-    dayShiftOrder: Array.isArray(scheduleData.dayShiftOrder) ? scheduleData.dayShiftOrder : [],
-    nightShiftStartId: scheduleData.nightShiftStartId ?? null,
-    dayShiftStartId: scheduleData.dayShiftStartId ?? null,
-    pairs: Array.isArray(scheduleData.pairs) ? scheduleData.pairs : [],
-    backupAt: new Date().toISOString(),
-  };
-  const now = new Date();
-  const filename = `backup-staff-modality-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`;
-  downloadJson(backup, filename);
-}
-
-function applyScheduleFromBackup(backup) {
-  if (backup.scheduleData != null) {
-    const scheduleData = { ...backup.scheduleData };
-    if (scheduleData.weeklyOff) {
-      scheduleData.weeklyOff = normalizeWeeklyOff(scheduleData.weeklyOff);
-    }
-    setScheduleData(scheduleData);
-    return;
-  }
-  if (
-    backup.nightShiftOrder != null ||
-    backup.dayShiftOrder != null ||
-    backup.nightShiftStartId != null ||
-    backup.dayShiftStartId != null ||
-    backup.pairs != null
-  ) {
-    const existing = getScheduleData();
-    setScheduleData({
-      ...existing,
-      nightShiftOrder: Array.isArray(backup.nightShiftOrder) ? backup.nightShiftOrder : (existing.nightShiftOrder || []),
-      dayShiftOrder: Array.isArray(backup.dayShiftOrder) ? backup.dayShiftOrder : (existing.dayShiftOrder || []),
-      nightShiftStartId: backup.nightShiftStartId ?? existing.nightShiftStartId ?? null,
-      dayShiftStartId: backup.dayShiftStartId ?? existing.dayShiftStartId ?? null,
-      pairs: Array.isArray(backup.pairs) ? backup.pairs : (existing.pairs || []),
-    });
-  }
+  const schedule = getScheduleData();
+  const backup = { schemaVersion: SCHEMA_VERSION, modalityData: getModalityData(), staffData: getStaffData() };
+  ORDER_KEYS.forEach((k) => { backup[k] = asArray(schedule[k]); });
+  START_ID_KEYS.forEach((k) => { backup[k] = schedule[k] ?? null; });
+  backup.backupAt = new Date().toISOString();
+  downloadJson(backup, `backup-staff-modality-${timestamp()}.json`);
 }
 
 /** バックアップ JSON を復元（成功時は呼び出し側で reload すること） */
 export function restoreFromBackupObject(backup) {
   clearAllData();
+  const { modalityData, staffData, scheduleData, leaveData, allocationData, calendarComments, monthlyComments } = backup;
 
-  if (backup.modalityData != null) setModalityData(backup.modalityData);
-  if (backup.staffData != null) setStaffData(backup.staffData);
-  applyScheduleFromBackup(backup);
+  if (modalityData != null) setModalityData(modalityData);
+  if (staffData != null) setStaffData(staffData);
 
-  if (backup.leaveData != null) {
-    const leave = backup.leaveData?.leaveData ?? backup.leaveData;
-    if (leave && typeof leave === 'object') setLeaveData(leave);
-    else writeJson(STORAGE_KEYS.LEAVE, backup.leaveData);
+  if (scheduleData != null) {
+    setScheduleData(scheduleData.weeklyOff
+      ? { ...scheduleData, weeklyOff: normalizeWeeklyOff(scheduleData.weeklyOff) }
+      : scheduleData);
+  } else if ([...ORDER_KEYS, ...START_ID_KEYS].some((k) => backup[k] != null)) {
+    // 職員・モダリティのみのバックアップ形式
+    const schedule = {};
+    ORDER_KEYS.forEach((k) => { schedule[k] = asArray(backup[k]); });
+    START_ID_KEYS.forEach((k) => { schedule[k] = backup[k] ?? null; });
+    setScheduleData(schedule);
   }
-  if (backup.allocationData != null) setAllocationData(backup.allocationData);
-  if (backup.calendarComments != null) setCalendarComments(backup.calendarComments);
-  if (backup.monthlyComments != null) setMonthlyComments(backup.monthlyComments);
+
+  if (leaveData != null) {
+    const leave = leaveData.leaveData ?? leaveData;
+    if (typeof leave === 'object') setLeaveData(leave);
+  }
+  if (allocationData != null) setAllocationData(allocationData);
+  if (calendarComments != null) setCalendarComments(calendarComments);
+  if (monthlyComments != null) setMonthlyComments(monthlyComments);
 }
 
-export function restoreFromBackupFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        let text = reader.result;
-        if (typeof text !== 'string') text = String(text);
-        if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-        const backup = JSON.parse(text);
-        restoreFromBackupObject(backup);
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
-    };
-    reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
-    reader.readAsText(file, 'UTF-8');
-  });
-}
-
-/** weeklyOff を正規化して修正版バックアップをダウンロード */
-export function downloadFixedBackupFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const backup = JSON.parse(reader.result);
-        if (backup.scheduleData?.weeklyOff) {
-          backup.scheduleData.weeklyOff = normalizeWeeklyOff(backup.scheduleData.weeklyOff);
-        }
-        const base = file.name?.endsWith('.json') ? file.name.slice(0, -5) : 'backup-fixed';
-        downloadJson(backup, `${base}-fixed.json`);
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
-    };
-    reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
-    reader.readAsText(file, 'UTF-8');
-  });
-}
-
-export function resetAllPersistedData() {
-  clearAllData();
+export async function restoreFromBackupFile(file) {
+  const text = (await file.text()).replace(/^\uFEFF/, '');
+  restoreFromBackupObject(JSON.parse(text));
 }

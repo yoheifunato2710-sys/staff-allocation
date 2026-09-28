@@ -1,167 +1,106 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   getModalityData,
   setModalityData as persistModalityData,
   getStaffData,
   setStaffData as persistStaffData,
-  getScheduleData,
+  getDataUpdatedAt,
+  clearAllData,
 } from '../utils/storage';
-import { exportModalityCSV as doExportModalityCSV, exportStaffCSV as doExportStaffCSV } from '../utils/csv';
+import { exportModalityCSV, exportStaffCSV } from '../utils/csv';
 import {
   downloadFullBackup,
   downloadStaffModalityBackup,
   restoreFromBackupFile,
   restoreFromBackupObject,
-  resetAllPersistedData,
 } from '../utils/backup';
 import {
   isElectronPersistAvailable,
-  loadAutosaveFile,
+  findNewerSavedData,
   listLocalSnapshots,
   loadLocalSnapshot,
   flushLocalAutosave,
   setupExitSnapshotHandler,
+  getBackupDir,
+  chooseBackupDir,
 } from '../utils/localPersist';
 
 const DataContext = createContext(null);
 
+async function flushAndReload() {
+  await flushLocalAutosave();
+  window.location.reload();
+}
+
 export function DataProvider({ children }) {
-  const [modalityData, setModalityDataState] = useState([]);
-  const [staffData, setStaffDataState] = useState([]);
+  const [modalityData, setModalityData] = useState([]);
+  const [staffData, setStaffData] = useState([]);
   const [persistReady, setPersistReady] = useState(false);
-  const modalityLoaded = useRef(false);
-  const staffLoaded = useRef(false);
 
-  const reloadFromStorage = useCallback(() => {
-    setModalityDataState(getModalityData());
-    setStaffDataState(getStaffData());
-  }, []);
-
-  // 起動時: Electron の autosave があれば localStorage へ反映して再開
+  // 起動時: 自動保存・バックアップ先の最新スナップショットが今のデータより新しければ、それを読み込んで再開
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         if (isElectronPersistAvailable()) {
-          const staff = getStaffData();
-          const modality = getModalityData();
-          const schedule = Object.keys(getScheduleData() || {}).length > 0;
-          const hasLocal = (Array.isArray(staff) && staff.length > 0)
-            || (Array.isArray(modality) && modality.length > 0)
-            || schedule;
-          if (!hasLocal) {
-            const result = await loadAutosaveFile();
-            if (!cancelled && result?.ok && result.data) {
-              restoreFromBackupObject(result.data);
-            }
-          } else {
-            await flushLocalAutosave();
-          }
+          const newer = await findNewerSavedData(getDataUpdatedAt());
+          if (cancelled) return;
+          if (newer) restoreFromBackupObject(newer);
+          await flushLocalAutosave();
         }
       } catch (err) {
         console.error('Failed to hydrate from autosave:', err);
       } finally {
         if (!cancelled) {
-          reloadFromStorage();
+          setModalityData(getModalityData());
+          setStaffData(getStaffData());
           setPersistReady(true);
         }
       }
     })();
     return () => { cancelled = true; };
-  }, [reloadFromStorage]);
+  }, []);
+
+  useEffect(() => (persistReady ? setupExitSnapshotHandler() : undefined), [persistReady]);
 
   useEffect(() => {
-    if (!persistReady) return undefined;
-    return setupExitSnapshotHandler();
-  }, [persistReady]);
-
-  useEffect(() => {
-    if (!persistReady || !modalityLoaded.current) return;
-    persistModalityData(modalityData);
+    if (persistReady) persistModalityData(modalityData);
   }, [modalityData, persistReady]);
 
   useEffect(() => {
-    if (!persistReady || !staffLoaded.current) return;
-    persistStaffData(staffData);
+    if (persistReady) persistStaffData(staffData);
   }, [staffData, persistReady]);
-
-  useEffect(() => {
-    if (!persistReady) return undefined;
-    const t = setTimeout(() => { modalityLoaded.current = true; }, 100);
-    return () => clearTimeout(t);
-  }, [persistReady]);
-
-  useEffect(() => {
-    if (!persistReady) return undefined;
-    const t = setTimeout(() => { staffLoaded.current = true; }, 100);
-    return () => clearTimeout(t);
-  }, [persistReady]);
-
-  const setModalityData = (updater) => {
-    setModalityDataState((prev) => (typeof updater === 'function' ? updater(prev) : updater));
-  };
-
-  const setStaffData = (updater) => {
-    setStaffDataState((prev) => (typeof updater === 'function' ? updater(prev) : updater));
-  };
-
-  const saveModalityData = () => persistModalityData(modalityData);
-  const saveStaffData = () => persistStaffData(staffData);
-
-  const exportModalityCSV = () => doExportModalityCSV(modalityData);
-  const exportStaffCSV = () => doExportStaffCSV(modalityData, staffData);
-
-  const backupAll = () => downloadFullBackup();
-  const backupStaffModality = () => downloadStaffModalityBackup();
-
-  const restoreBackup = async (file) => {
-    await restoreFromBackupFile(file);
-    await flushLocalAutosave();
-    window.location.reload();
-  };
-
-  const restoreLocalSnapshot = async (filename) => {
-    const result = await loadLocalSnapshot(filename);
-    if (!result?.ok || !result.data) {
-      throw new Error(result?.error || 'スナップショットの読み込みに失敗しました');
-    }
-    restoreFromBackupObject(result.data);
-    await flushLocalAutosave();
-    window.location.reload();
-  };
-
-  const fetchLocalSnapshots = async () => listLocalSnapshots();
-
-  const resetAllData = () => {
-    resetAllPersistedData();
-    flushLocalAutosave().finally(() => window.location.reload());
-  };
 
   const value = {
     modalityData,
     setModalityData,
     staffData,
     setStaffData,
-    reloadFromStorage,
-    saveModalityData,
-    saveStaffData,
-    exportModalityCSV,
-    exportStaffCSV,
-    backupAll,
-    backupStaffModality,
-    restoreBackup,
-    restoreLocalSnapshot,
-    fetchLocalSnapshots,
+    exportModalityCSV: () => exportModalityCSV(modalityData),
+    exportStaffCSV: () => exportStaffCSV(modalityData, staffData),
+    backupAll: downloadFullBackup,
+    backupStaffModality: downloadStaffModalityBackup,
+    restoreBackup: async (file) => {
+      await restoreFromBackupFile(file);
+      await flushAndReload();
+    },
+    restoreLocalSnapshot: async (filename) => {
+      const result = await loadLocalSnapshot(filename);
+      if (!result?.ok || !result.data) throw new Error(result?.error || 'スナップショットの読み込みに失敗しました');
+      restoreFromBackupObject(result.data);
+      await flushAndReload();
+    },
+    fetchLocalSnapshots: listLocalSnapshots,
+    getBackupDir,
+    chooseBackupDir,
     isElectronPersist: isElectronPersistAvailable(),
-    persistReady,
-    resetAllData,
+    resetAllData: () => {
+      clearAllData();
+      flushLocalAutosave().finally(() => window.location.reload());
+    },
   };
 
-  return (
-    <DataContext.Provider value={value}>
-      {children}
-    </DataContext.Provider>
-  );
+  return <DataContext.Provider value={value}>{persistReady ? children : null}</DataContext.Provider>;
 }
 
 export function useData() {

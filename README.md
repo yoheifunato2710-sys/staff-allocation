@@ -45,7 +45,11 @@ npm run build:dir
 | `utils/holidays.js` | 祝日計算（全画面共通） |
 | `utils/weeklyOff.js` | 週休データの正規化・参照 |
 | `utils/csv.js` | 職員・モダリティの CSV 出力 |
+| `utils/localPersist.js` | Electron 環境での自動保存・スナップショット |
+| `utils/allocation.js` | 配置表の自動作成ロジック・週休移動の判定 |
+| `utils/date.js` / `utils/leave.js` | 日付ユーティリティ / 休暇データの更新ヘルパー |
 | `context/DataContext.jsx` | 職員・モダリティの状態管理とバックアップ API |
+| `components/` | 共通部品（配置表ビュー、月カレンダー、モーダル、並べ替えリストなど） |
 | `screens/` | 各画面 UI |
 
 データの保存キーは `utils/storage.js` の `STORAGE_KEYS` に集約しています。
@@ -56,4 +60,6 @@ npm run build:dir
 
 職員・モダリティ画面では **CSV出力** ボタンから Excel 等で開けるファイルをダウンロードできます。
 
-アプリを終了する前にバックアップを取得してください（終了時に確認ダイアログが表示されます）。
+デスクトップアプリでは、終了するたびに保存操作の有無にかかわらず、指定フォルダへ日時名（`YYYY-MM-DD_HH-mm-ss.json`）で自動バックアップします。
+保存先は初期状態で `ドキュメント\人員配置管理バックアップ` で、メインメニューの「変更」から指定できます（設定は userData の `data/settings.json`）。
+起動時は localStorage・自動保存ファイル・保存先フォルダの最新バックアップを比較し、最も新しいデータを読み込みます。

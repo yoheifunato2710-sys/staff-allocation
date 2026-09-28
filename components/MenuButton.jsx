@@ -21,7 +21,7 @@ export default function MenuButton({ icon, title, detail, onClick, onPointerDown
         e.stopPropagation();
         onClick?.();
       }}
-      className={`group relative flex items-center shrink-0 min-h-[52px] bg-slate-50 border-2 border-slate-400 hover:border-slate-500 px-5 py-2.5 rounded-xl transition-all duration-300 hover:shadow-md shadow-sm cursor-pointer select-none w-full text-left hover:-translate-y-0.5 ${accentColors[accent]}`}
+      className={`group relative flex items-center shrink-0 min-h-[44px] bg-slate-50 border-2 border-slate-400 hover:border-slate-500 px-5 py-1.5 rounded-xl transition-all duration-300 hover:shadow-md shadow-sm cursor-pointer select-none w-full text-left hover:-translate-y-0.5 ${accentColors[accent]}`}
     >
       <div className="absolute inset-0 pointer-events-none bg-gradient-to-br from-slate-50/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-xl" />
       <div className="relative flex items-center gap-3 w-full min-w-0">

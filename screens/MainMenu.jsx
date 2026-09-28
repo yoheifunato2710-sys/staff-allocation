@@ -4,7 +4,7 @@ import MonthCalendar from '../components/MonthCalendar';
 import Modal from '../components/Modal';
 import { useData } from '../context/DataContext';
 import { getWeeklyOffIds } from '../utils/weeklyOff';
-import { pickShift } from '../utils/allocation';
+import { allocationName, pickShift } from '../utils/allocation';
 import {
   getLeaveData,
   setLeaveData as persistLeaveData,
@@ -20,8 +20,8 @@ import { LEAVE_TYPES, addLeaves, removeLeave, updateLeaveType } from '../utils/l
 import { WEEK_LABELS, addDays, pad, parseDate } from '../utils/date';
 
 const MENU_ITEMS = [
-  { screen: 'staff-db', icon: '📝', title: '職員情報登録', detail: '職員の登録・編集、各モダリティの配置スコア（0〜4）を設定', accent: 'violet' },
   { screen: 'modality-db', icon: '⚙️', title: 'モダリティ情報入力', detail: '配置先モダリティの追加、必要人数（一律または曜日別）の設定', accent: 'cyan' },
+  { screen: 'staff-db', icon: '📝', title: '職員情報登録', detail: '職員の登録・編集、各モダリティの配置スコア（0〜4）を設定', accent: 'violet' },
   { screen: 'leave-input', icon: '🏖️', title: '休暇・出張入力', detail: '休暇・出張の日付と職員を登録し、カレンダーに反映', accent: 'rose' },
   { screen: 'shift-schedule', icon: '🗓️', title: '当番表・配置表作成', detail: '期間設定、当番表の作成・週休割当のあと、その下で配置表を自動作成・保存', accent: 'amber', navigateOnPointerDown: true },
   { screen: 'rules', icon: '📜', title: 'ルール', detail: '使い方の流れ、配置スコア・配置対象外・自動配置のルール確認', accent: 'emerald' },
@@ -47,7 +47,8 @@ function DayAllocationTable({ dateStr, modalityData, name, leaveData }) {
   const daySched = mergeSched(dateStr);
   const nextSched = mergeSched(addDays(dateStr, 1));
   const dayAlloc = allocation[dateStr];
-  const manualStaff = dayAlloc?._manualStaff || [];
+  const manualSlots = dayAlloc?._manualSlots || dayAlloc?._manualStaff || [];
+  const isManual = (id, modId, h) => manualSlots.some((m) => m?.staffId === id && m.modId == modId && m.slot === h);
   const dayLeaves = leaveData[dateStr] || [];
 
   const scheduleRows = [
@@ -93,7 +94,7 @@ function DayAllocationTable({ dateStr, modalityData, name, leaveData }) {
                   {cell(
                     <div className="flex flex-col gap-0.5">
                       {slot[h]?.length ? sortIds(slot[h]).map((id) => (
-                        <span key={id} className={manualStaff.includes(id) ? 'text-red-600 font-medium' : ''}>{name(id)}</span>
+                        <span key={id} className={isManual(id, mod.id, h) ? 'text-red-600 font-medium' : ''}>{name(id)}</span>
                       )) : '－'}
                     </div>,
                     h === 'am' ? 'border-l-2' : 'border-l',
@@ -130,7 +131,6 @@ export default function MainMenu({ onNavigate }) {
     modalityData,
     staffData,
     backupAll,
-    backupStaffModality,
     restoreBackup,
     restoreLocalSnapshot,
     fetchLocalSnapshots,
@@ -162,6 +162,7 @@ export default function MainMenu({ onNavigate }) {
   };
 
   const name = (id) => (id ? staffData.find((s) => s.id === id)?.name || id : '');
+  const allocName = (id) => (id ? allocationName(staffData.find((s) => s.id === id)) || id : '');
   const monthKey = `${monthDate.getFullYear()}-${pad(monthDate.getMonth() + 1)}`;
 
   const commitLeave = (next) => {
@@ -252,7 +253,6 @@ export default function MainMenu({ onNavigate }) {
   const backupButtons = [
     isElectronPersist && { icon: '🕒', label: '保存データから再開', color: 'sky', onClick: openSnapshotList },
     { icon: '📦', label: '今のデータをファイルに保存', color: 'amber', onClick: () => runBackup(backupAll, 'バックアップをダウンロードしました') },
-    { icon: '👥', label: '職員・モダリティのみバックアップ', color: 'teal', onClick: () => runBackup(backupStaffModality, '職員・モダリティのバックアップをダウンロードしました') },
     { icon: '📥', label: 'ファイルからデータを復元', color: 'violet', onClick: () => restoreInputRef.current?.click() },
     { icon: '🗑️', label: '全データをリセット', color: 'rose', onClick: handleReset },
   ].filter(Boolean);
@@ -260,7 +260,6 @@ export default function MainMenu({ onNavigate }) {
   const buttonColors = {
     sky: 'bg-sky-50 hover:bg-sky-100 border-sky-400 text-sky-900',
     amber: 'bg-amber-50 hover:bg-amber-100 border-amber-400 text-amber-900',
-    teal: 'bg-teal-50 hover:bg-teal-100 border-teal-400 text-teal-900',
     violet: 'bg-violet-50 hover:bg-violet-100 border-violet-400 text-violet-900',
     rose: 'bg-rose-50 hover:bg-rose-100 border-rose-400 text-rose-800',
   };
@@ -324,9 +323,7 @@ export default function MainMenu({ onNavigate }) {
         <div className="flex-1 min-w-0 flex flex-col">
           <MonthCalendar
             monthDate={monthDate}
-            onChangeMonth={setMonthDate}
-            hint="日付をクリックでコメントを追加・編集"
-            renderCell={({ dateStr, day, isWeekend, dateColor }) => (
+            onChangeMonth={setMonthDate}            renderCell={({ dateStr, day, isWeekend, dateColor }) => (
               <button
                 key={dateStr}
                 type="button"
@@ -357,7 +354,7 @@ export default function MainMenu({ onNavigate }) {
         <Modal title={selectedDate} onClose={closeModal} className="max-w-4xl max-h-[90vh] overflow-hidden">
           <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
             <div className="flex-1 min-w-0 overflow-y-auto border border-slate-300 rounded-xl bg-white p-3">
-              <DayAllocationTable dateStr={selectedDate} modalityData={modalityData} name={name} leaveData={leaveData} />
+              <DayAllocationTable dateStr={selectedDate} modalityData={modalityData} name={allocName} leaveData={leaveData} />
             </div>
 
             <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">

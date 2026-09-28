@@ -46,7 +46,7 @@ export default function MonthCalendar({ monthDate, onChangeMonth, renderCell, gr
           return renderCell({ ...cell, isWeekend: cell.dow === 0 || cell.dow === 6, dateColor });
         })}
       </div>
-      <p className="text-stone-700 text-sm mt-2 shrink-0 font-medium">{hint}</p>
+      {hint && <p className="text-stone-700 text-sm mt-2 shrink-0 font-medium">{hint}</p>}
       {children}
     </div>
   );

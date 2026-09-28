@@ -1,10 +1,6 @@
 import {
-  SCHEMA_VERSION,
   getAllPersistedData,
   getAllocationData,
-  getModalityData,
-  getScheduleData,
-  getStaffData,
   clearAllData,
   setAllocationData,
   setCalendarComments,
@@ -31,16 +27,6 @@ export function downloadFullBackup() {
   const dateStr = allocation?.startDate || allocation?.endDate;
   const name = isDateStr(dateStr) ? `${dateStr}-${now.slice(-6)}` : now;
   downloadJson(getAllPersistedData(), `backup-${name}.json`);
-}
-
-/** 職員・モダリティと当番順序のみバックアップ */
-export function downloadStaffModalityBackup() {
-  const schedule = getScheduleData();
-  const backup = { schemaVersion: SCHEMA_VERSION, modalityData: getModalityData(), staffData: getStaffData() };
-  ORDER_KEYS.forEach((k) => { backup[k] = asArray(schedule[k]); });
-  START_ID_KEYS.forEach((k) => { backup[k] = schedule[k] ?? null; });
-  backup.backupAt = new Date().toISOString();
-  downloadJson(backup, `backup-staff-modality-${timestamp()}.json`);
 }
 
 /** バックアップ JSON を復元（成功時は呼び出し側で reload すること） */

@@ -17,6 +17,9 @@ export const pickShift = (daySched, field) => daySched?.[`${field}Manual`] ?? da
 
 export const isSlot = (slot) => !!slot && !Array.isArray(slot);
 
+/** 配置表に表示する名前（表示名が未入力なら氏名） */
+export const allocationName = (staff) => staff?.displayName?.trim() || staff?.name;
+
 export const getUnassigned = (day, half) => day?.[UNASSIGNED_KEY[half]] ?? day?._unassigned ?? [];
 
 export const canWorkHalf = (staff, half) => !staff?.isPartTime || staff.partTimeSlot === 'am_pm' || staff.partTimeSlot === half;

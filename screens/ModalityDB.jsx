@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 import ScreenHeader from '../components/ScreenHeader';
 import SortableList from '../components/SortableList';
+import { removeModalityReferences } from '../utils/cleanup';
 
 const WEEKDAYS = [['mon', '月'], ['tue', '火'], ['wed', '水'], ['thu', '木'], ['fri', '金']];
 const inputClass = 'bg-white border-2 border-slate-400 text-stone-900 text-lg focus:border-violet-400 outline-none';
@@ -36,7 +37,7 @@ function CountInput({ label, value, onChange, className }) {
 }
 
 export default function ModalityDB({ onBack }) {
-  const { modalityData, setModalityData, exportModalityCSV } = useData();
+  const { modalityData, setModalityData, setStaffData, exportModalityCSV } = useData();
   const [expandedId, setExpandedId] = useState(null);
   const mod = modalityData.find((m) => m.id === expandedId);
 
@@ -57,7 +58,13 @@ export default function ModalityDB({ onBack }) {
   };
 
   const deleteModality = () => {
-    if (!confirm('このモダリティを削除しますか？')) return;
+    if (!confirm('このモダリティを削除しますか？\n配置表でこのモダリティに配置されていた職員は未配置に戻り、各職員のスコアからも削除されます。')) return;
+    removeModalityReferences(expandedId);
+    setStaffData((prev) => prev.map((s) => {
+      if (!s.scores || !(expandedId in s.scores)) return s;
+      const { [expandedId]: _removed, ...scores } = s.scores;
+      return { ...s, scores };
+    }));
     setModalityData((prev) => prev.filter((m) => m.id !== expandedId));
     setExpandedId(null);
   };

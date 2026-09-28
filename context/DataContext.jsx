@@ -10,7 +10,6 @@ import {
 import { exportModalityCSV, exportStaffCSV } from '../utils/csv';
 import {
   downloadFullBackup,
-  downloadStaffModalityBackup,
   restoreFromBackupFile,
   restoreFromBackupObject,
 } from '../utils/backup';
@@ -79,7 +78,6 @@ export function DataProvider({ children }) {
     exportModalityCSV: () => exportModalityCSV(modalityData),
     exportStaffCSV: () => exportStaffCSV(modalityData, staffData),
     backupAll: downloadFullBackup,
-    backupStaffModality: downloadStaffModalityBackup,
     restoreBackup: async (file) => {
       await restoreFromBackupFile(file);
       await flushAndReload();

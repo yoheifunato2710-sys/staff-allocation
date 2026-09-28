@@ -5,6 +5,7 @@ import {
   HALVES,
   KYUKYU_NAME,
   UNASSIGNED_KEY,
+  allocationName,
   computeWeeklyOffAfterMove,
   getRequired,
   getUnassigned,
@@ -56,7 +57,7 @@ const findDuplicates = (ids) => {
 export default function AllocationTableView({ allocation, modalityData, staffData, calendar, schedule, weeklyOff, surgeryDays, setAllocation, setWeeklyOff }) {
   const [assignPicker, setAssignPicker] = useState(null);
   const leaves = useMemo(getLeaveData, []);
-  const name = (id) => (id ? staffData.find((s) => s.id === id)?.name || id : '');
+  const name = (id) => (id ? allocationName(staffData.find((s) => s.id === id)) || id : '');
 
   /** 日付ごとの B 担当者・当番等で埋まっている職員・重複職員 */
   const dayInfo = useMemo(() => {

@@ -3,6 +3,7 @@ import { useData } from '../context/DataContext';
 import ScreenHeader from '../components/ScreenHeader';
 import SortableList from '../components/SortableList';
 import StaffBadges, { PART_TIME_SLOTS } from '../components/StaffBadges';
+import { removeStaffReferences } from '../utils/cleanup';
 
 const labelClass = 'block mb-1.5 font-semibold text-stone-800 text-sm uppercase tracking-wider';
 const inputClass = 'p-2 bg-white border-2 border-slate-400 rounded-lg text-stone-900 text-base placeholder-stone-400 focus:border-violet-400 focus:ring-2 focus:ring-violet-100 outline-none transition-all';
@@ -35,7 +36,7 @@ export default function StaffDB({ onBack }) {
   const openNewForm = () => {
     setEditingId(null);
     setForm({
-      id: '', name: '', years: '', position: '', isPartTime: false, partTimeSlot: 'am_pm',
+      id: '', name: '', displayName: '', years: '', position: '', isPartTime: false, partTimeSlot: 'am_pm',
       scores: Object.fromEntries(modalityData.map((m) => [m.id, 0])),
     });
   };
@@ -64,7 +65,8 @@ export default function StaffDB({ onBack }) {
   };
 
   const deleteStaff = () => {
-    if (!confirm('本当にこの職員を削除しますか？')) return;
+    if (!confirm('本当にこの職員を削除しますか？\n当番表・順番設定・週休・休暇・配置表からもこの職員を外します。')) return;
+    removeStaffReferences(editingId);
     setStaffData((prev) => prev.filter((s) => s.id !== editingId));
     close();
     alert('✅ 職員を削除しました');
@@ -132,6 +134,16 @@ export default function StaffDB({ onBack }) {
                           ))}
                         </div>
                       )}
+                    </div>
+                    <div className="col-span-2">
+                      <label className={labelClass}>配置表での表示名</label>
+                      <input
+                        type="text"
+                        value={form.displayName ?? ''}
+                        onChange={(e) => update({ displayName: e.target.value })}
+                        className={`w-full ${inputClass}`}
+                        placeholder={`未入力なら氏名（${form.name || '例: 山田太郎'}）を表示`}
+                      />
                     </div>
                     <div>
                       <label className={labelClass}>入職年数 *</label>
